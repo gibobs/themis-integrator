@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, FileText } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Callout } from '@/components/ui/callout';
@@ -10,6 +10,7 @@ import { ContinuationLink } from '@/components/continuation-link';
 import { RequestInspector } from '@/components/request-inspector';
 import { StatusPoller } from './status-poller';
 import { HistoryPanel } from './history-panel';
+import { DocumentsPanel } from './documents-panel';
 import { getThemisClient, ThemisError } from '@/lib/themis';
 import type { ThemisExchange, ThemisOperationDetailResource } from '@/lib/themis';
 import { audited } from '@/lib/server/respond';
@@ -76,6 +77,16 @@ export default async function OperationDetailPage({
 				<PageHeader
 					title={title}
 					description="Detalle de la operación en Themis (incluye PII, se consulta una a una)."
+					actions={
+						processed ? (
+							<Link
+								href={`/operations/${operationId}/documents`}
+								className="inline-flex h-9 items-center gap-2 rounded-md border border-input bg-card px-4 text-sm font-medium hover:bg-accent hover:text-accent-foreground"
+							>
+								<FileText className="size-4" /> Ver documentos
+							</Link>
+						) : undefined
+					}
 				/>
 			</div>
 
@@ -239,6 +250,19 @@ export default async function OperationDetailPage({
 						</CardHeader>
 						<CardContent>
 							<HistoryPanel operationId={operationId} externalId={externalId} />
+						</CardContent>
+					</Card>
+
+					<Card className="md:col-span-2">
+						<CardHeader>
+							<CardTitle>Documentos</CardTitle>
+							<p className="text-sm text-muted-foreground">
+								Solo lectura: se consultan por <code>operationId</code> y se descargan mediante una
+								URL presignada efímera (directa a S3, fuera de Themis).
+							</p>
+						</CardHeader>
+						<CardContent>
+							<DocumentsPanel operationId={operationId} />
 						</CardContent>
 					</Card>
 				</div>

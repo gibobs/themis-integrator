@@ -23,6 +23,9 @@ export type ThemisErrorCode =
 	| 'THEMIS_RATE_LIMITED'
 	| 'THEMIS_INTAKE_FAILED'
 	| 'THEMIS_TRANSPORT'
+	// Familia `THEMIS_HTTP_<status>` que emite `themis-query` (p. ej. el área de
+	// documentos): el código deriva del status HTTP, no es semántico.
+	| 'THEMIS_HTTP_404'
 	| (string & {});
 
 export class ThemisError extends Error {

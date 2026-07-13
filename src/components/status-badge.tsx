@@ -2,19 +2,21 @@ import { Badge } from '@/components/ui/badge';
 import {
 	businessStatusMeta,
 	creationStatusMeta,
+	documentStatusMeta,
 	meta,
 	originMeta,
 	syncStatusMeta,
 	type Tone,
 } from '@/lib/status';
 
-type Kind = 'creation' | 'business' | 'sync' | 'origin';
+type Kind = 'creation' | 'business' | 'sync' | 'origin' | 'document';
 
 const tables: Record<Kind, Record<string, { tone: Tone; label: string }>> = {
 	creation: creationStatusMeta,
 	business: businessStatusMeta,
 	sync: syncStatusMeta,
 	origin: originMeta,
+	document: documentStatusMeta,
 };
 
 export function StatusBadge({ kind, value }: { kind: Kind; value: string | null | undefined }) {

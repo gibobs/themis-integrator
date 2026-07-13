@@ -34,6 +34,9 @@ de principio a fin **sin credenciales**.
 	de forma incremental por *cursor*.
 - **Conciliación con write-back**: ingieres operaciones sin `externalId` (p. ej.
 	autoprescripciones) y las enlazas a tu referencia.
+- **Documentos (solo lectura)**: consultas los documentos de una operación y su
+	**estado documental** (requeridos / presentes / pendientes), y obtienes una
+	**URL de descarga efímera** (directa a S3, fuera de Themis) para bajar cada uno.
 - **Inspector de request/response**: cada pantalla que llama a Themis muestra, en
 	un desplegable, la petición y la respuesta reales (cabeceras y body) — ver
 	[abajo](#inspector-de-requestresponse).
@@ -45,8 +48,8 @@ El modelo de interacción es **empujar y consultar**: tú empujas el alta y
 consultas el resultado. Hoy **Themis nunca te llama**; en el futuro habrá aviso
 por notificación saliente (webhook), y la consulta periódica seguirá siendo válida.
 
-> **Fuera de alcance (por ahora):** la parte de **identidad** y de **documentos**
-> de Themis no está cubierta en este integrador de referencia.
+> **Fuera de alcance (por ahora):** la parte de **identidad** de Themis no está
+> cubierta en este integrador de referencia.
 
 ---
 
@@ -168,19 +171,23 @@ src/
 │   ├── operations/                     # UI: listado, alta y detalle
 │   │   ├── page.tsx                    #   listado con filtros
 │   │   ├── new/create-form.tsx         #   formulario de alta (intervinientes, oferta, ejemplo)
-│   │   └── [operationId]/              #   detalle + seguimiento del alta + histórico
+│   │   └── [operationId]/              #   detalle + seguimiento + histórico + panel de documentos
+│   │       └── documents/page.tsx      #   subpágina: vista completa de documentos
 │   ├── changes/                        # UI: change-feed (drift)
 │   ├── reconciliation/                 # UI: conciliación + write-back
 │   ├── settings/                       # UI: entorno, variables y reset de datos
 │   ├── handoff/landing/                # landing de continuación del handoff (canje + estado)
 │   └── api/                            # rutas BFF (nunca exponen credenciales)
 │       ├── operations/                 #   GET listado · POST alta · detalle/estado/histórico
+│       │   └── [operationId]/documents #   GET listado · estado · URL de descarga (solo lectura)
+│       ├── mock/documents/…/download   #   descarga simulada (S3) del PDF de ejemplo — solo mock
 │       ├── changes/route.ts            #   POST change-feed
 │       ├── reconciliation/             #   GET pending · POST write-back
 │       ├── handoff/                    #   POST redeem · GET status
 │       └── settings/reset/route.ts     #   POST vaciar almacén local
 ├── components/                         # kit de UI (Card, Button, Table, Badge, Callout…)
 │   ├── request-inspector.tsx           #   desplegable request/response (con redacción)
+│   ├── documents/                      #   vista + botón de descarga de documentos (compartidos)
 │   ├── status-badge.tsx · continuation-link.tsx · copy-button.tsx · nav.tsx · app-shell.tsx
 │   └── ui/                             #   primitivas (button, card, input, table, json-view…)
 └── lib/
@@ -190,7 +197,7 @@ src/
     │   ├── http.ts                     #   transporte, reintentos con backoff, captura de intercambios
     │   ├── client.ts                   #   request autenticado (Prefer, Idempotency-Key)
     │   ├── intake.ts                   #   alta, estado, write-back, handoff
-    │   ├── query.ts                    #   listado, change-feed, detalle, histórico
+    │   ├── query.ts                    #   listado, change-feed, detalle, histórico, documentos
     │   ├── errors.ts                   #   ThemisError (application/problem+json)
     │   ├── exchange.ts                 #   tipo del intercambio HTTP (para el inspector)
     │   ├── schema.ts                   #   validación (zod): alta, intervinientes y oferta
@@ -220,12 +227,19 @@ src/
 	(`PROCESSED` o `FAILED`). En handoff, además, dispones de la `continuationUrl`.
 3. **Listar y ver el detalle** (`/operations`): filtra el índice (sin PII) y abre
 	una operación para ver sus datos completos (una operación cada vez).
-4. **Descubrir cambios** (`/changes`): consumes el change-feed por *cursor* para
-	enterarte del *drift* (cambios de estado/etapa) de tus operaciones.
-5. **Conciliar** (`/reconciliation`): localizas operaciones sin `externalId` (p. ej.
+4. **Consultar documentos** (detalle de la operación o su subpágina
+	`/operations/[operationId]/documents`): sobre una operación ya procesada, el
+	panel de **Documentos** trae el listado y el **estado documental** (requeridos /
+	presentes / pendientes). Son lecturas **bajo demanda** por `operationId`, sin
+	`externalId`. Al pulsar **Descargar** se obtiene una **URL presignada efímera**
+	(TTL ~5 min) y el navegador baja el fichero **directo de S3** (fuera de Themis).
+5. **Descubrir cambios** (`/changes`): consumes el change-feed por *cursor* para
+	enterarte del *drift* (cambios de estado/etapa) de tus operaciones. Los
+	documentos **no** aparecen en el change-feed.
+6. **Conciliar** (`/reconciliation`): localizas operaciones sin `externalId` (p. ej.
 	autoprescripciones), les asignas tu referencia y haces el **write-back** para
 	enlazarlas en Themis.
-6. **Revisar la auditoría** (`/settings`): consultas el log local de las llamadas a
+7. **Revisar la auditoría** (`/settings`): consultas el log local de las llamadas a
 	Themis (método, ruta, status, código y duración).
 
 En **todas** estas pantallas puedes abrir el desplegable *«Petición(es) a Themis»*

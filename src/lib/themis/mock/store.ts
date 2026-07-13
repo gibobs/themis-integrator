@@ -23,6 +23,9 @@ export function getMockDb(): Database.Database {
 	db.pragma('journal_mode = WAL');
 	migrate(db);
 	seed(db);
+	// Sembrado aparte e idempotente: así una `themis-mock.db` creada antes de la
+	// parte de documentos también los recibe al arrancar, sin `yarn db:reset`.
+	seedDocuments(db);
 	instance = db;
 	return db;
 }
@@ -60,6 +63,28 @@ function migrate(db: Database.Database): void {
 			k TEXT PRIMARY KEY,
 			v INTEGER NOT NULL
 		);
+		-- Documentos de una operación (solo lectura). El listado real excluye los
+		-- de owner = 'generic'; aquí se siembran algunos para ilustrar la exclusión.
+		CREATE TABLE IF NOT EXISTS mock_documents (
+			document_id  TEXT PRIMARY KEY,
+			operation_id TEXT NOT NULL,
+			type         TEXT NOT NULL,
+			status       TEXT NOT NULL,
+			name         TEXT NOT NULL,
+			mime         TEXT,
+			size         INTEGER,
+			owner        TEXT,
+			page         INTEGER,
+			created_at   TEXT NOT NULL
+		);
+		-- Requisitos documentales por operación (clave owner:type). El estado
+		-- documental sale de cruzar esto con los documentos presentes.
+		CREATE TABLE IF NOT EXISTS mock_document_requirements (
+			operation_id TEXT NOT NULL,
+			owner        TEXT NOT NULL,
+			type         TEXT NOT NULL,
+			mandatory    INTEGER NOT NULL DEFAULT 1
+		);
 	`);
 	const seq = db.prepare(`SELECT v FROM mock_meta WHERE k = 'versionSeq'`).get() as
 		| { v: number }
@@ -94,6 +119,26 @@ export interface MockRow {
 	version: number;
 	created_at: string;
 	updated_at: string;
+}
+
+export interface MockDocumentRow {
+	document_id: string;
+	operation_id: string;
+	type: string;
+	status: string;
+	name: string;
+	mime: string | null;
+	size: number | null;
+	owner: string | null;
+	page: number | null;
+	created_at: string;
+}
+
+export interface MockRequirementRow {
+	operation_id: string;
+	owner: string;
+	type: string;
+	mandatory: number;
 }
 
 // ── Derivación temporal del estado del alta ──────────────────────────────────
@@ -310,6 +355,138 @@ function seed(db: Database.Database): void {
 			insert.run({ ...row, startedAt: longAgo, version: nextVersion(db) });
 		}
 		db.prepare(`INSERT INTO mock_meta (k, v) VALUES ('seeded', 1)`).run();
+	});
+	tx();
+}
+
+/**
+ * Siembra documentos y requisitos para las operaciones INTAKE (ya PROCESSED),
+ * con una mezcla que deja documentos presentes (`VERIFIED`/`LABELED`) y algún
+ * requisito **pendiente**, para que el estado documental sea ilustrativo.
+ *
+ * `owner`/`type` usan cadenas realistas del catálogo del banco. Se incluye un
+ * documento de `owner = 'generic'` que el listado debe **excluir**, y uno en
+ * `NO_LABELED` (aparece en el listado pero **no** cuenta como presente).
+ *
+ * Se sembra con su **propio** flag (`docsSeeded`), independiente del de las
+ * operaciones, para que una base creada antes de esta parte reciba los documentos
+ * al arrancar (las operaciones sembradas tienen IDs estables, ya existen).
+ */
+function seedDocuments(db: Database.Database): void {
+	const done = db.prepare(`SELECT v FROM mock_meta WHERE k = 'docsSeeded'`).get() as
+		| { v: number }
+		| undefined;
+	if (done) return;
+
+	const longAgo = Date.now() - 60 * 60 * 1000;
+	const docInsert = db.prepare(
+		`INSERT INTO mock_documents
+			(document_id, operation_id, type, status, name, mime, size, owner, page, created_at)
+		 VALUES (@documentId, @operationId, @type, @status, @name, @mime, @size, @owner, @page, @createdAt)`,
+	);
+	const reqInsert = db.prepare(
+		`INSERT INTO mock_document_requirements (operation_id, owner, type, mandatory)
+		 VALUES (@operationId, @owner, @type, @mandatory)`,
+	);
+
+	const OP1 = '01J8Z9K3QF7MA0INTAKESEED01'; // Ada Lovelace · MORTGAGE
+	const OP2 = '01J8Z9K3QF7MA0INTAKESEED02'; // Alan Turing · SUBROGATION
+	const ts = (offset: number) => new Date(longAgo + offset).toISOString();
+
+	const documents = [
+		// OP1 — presentes (cuentan) + un requerido sin etiquetar + uno genérico (excluido).
+		{
+			documentId: '01J8ZDOC0000000000NOMINA01',
+			operationId: OP1,
+			type: 'NOMINA',
+			status: 'VERIFIED',
+			name: 'nomina-junio.pdf',
+			mime: 'application/pdf',
+			size: 184320,
+			owner: 'Ada Lovelace',
+			page: null,
+			createdAt: ts(5000),
+		},
+		{
+			documentId: '01J8ZDOC000000000000DNI001',
+			operationId: OP1,
+			type: 'DNI',
+			status: 'LABELED',
+			name: 'dni-anverso-reverso.pdf',
+			mime: 'application/pdf',
+			size: 96040,
+			owner: 'Ada Lovelace',
+			page: null,
+			createdAt: ts(6000),
+		},
+		{
+			documentId: '01J8ZDOC00000000000IRPF001',
+			operationId: OP1,
+			type: 'IRPF',
+			status: 'NO_LABELED',
+			name: 'irpf-2024.pdf',
+			mime: 'application/pdf',
+			size: 210500,
+			owner: 'Ada Lovelace',
+			page: null,
+			createdAt: ts(7000),
+		},
+		{
+			documentId: '01J8ZDOC0000000GENERIC0001',
+			operationId: OP1,
+			type: 'CONDICIONES_GENERALES',
+			status: 'VERIFIED',
+			name: 'condiciones-generales.pdf',
+			mime: 'application/pdf',
+			size: 51200,
+			owner: 'generic',
+			page: null,
+			createdAt: ts(8000),
+		},
+		// OP2 — dos presentes; el certificado de deuda queda pendiente.
+		{
+			documentId: '01J8ZDOC000000000000DNI002',
+			operationId: OP2,
+			type: 'DNI',
+			status: 'VERIFIED',
+			name: 'dni-alan-turing.pdf',
+			mime: 'application/pdf',
+			size: 90112,
+			owner: 'Alan Turing',
+			page: null,
+			createdAt: ts(9000),
+		},
+		{
+			documentId: '01J8ZDOC00000000ESCRITURA2',
+			operationId: OP2,
+			type: 'ESCRITURA',
+			status: 'LABELED',
+			name: 'escritura-vivienda.pdf',
+			mime: 'application/pdf',
+			size: 524288,
+			owner: 'Alan Turing',
+			page: null,
+			createdAt: ts(10000),
+		},
+	];
+
+	const requirements = [
+		// OP1: NOMINA y DNI quedan cubiertos; IRPF (obligatorio) y VIDA_LABORAL
+		// (opcional) quedan pendientes.
+		{ operationId: OP1, owner: 'Ada Lovelace', type: 'NOMINA', mandatory: 1 },
+		{ operationId: OP1, owner: 'Ada Lovelace', type: 'DNI', mandatory: 1 },
+		{ operationId: OP1, owner: 'Ada Lovelace', type: 'IRPF', mandatory: 1 },
+		{ operationId: OP1, owner: 'Ada Lovelace', type: 'VIDA_LABORAL', mandatory: 0 },
+		// OP2: DNI y ESCRITURA cubiertos; el certificado de deuda queda pendiente.
+		{ operationId: OP2, owner: 'Alan Turing', type: 'DNI', mandatory: 1 },
+		{ operationId: OP2, owner: 'Alan Turing', type: 'ESCRITURA', mandatory: 1 },
+		{ operationId: OP2, owner: 'Alan Turing', type: 'CERTIFICADO_DEUDA_PENDIENTE', mandatory: 1 },
+	];
+
+	const tx = db.transaction(() => {
+		for (const doc of documents) docInsert.run(doc);
+		for (const req of requirements) reqInsert.run(req);
+		db.prepare(`INSERT INTO mock_meta (k, v) VALUES ('docsSeeded', 1)`).run();
 	});
 	tx();
 }

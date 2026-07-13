@@ -25,6 +25,13 @@ export const syncStatusMeta: Record<string, { tone: Tone; label: string }> = {
 	CONFLICT: { tone: 'danger', label: 'Conflicto' },
 };
 
+export const documentStatusMeta: Record<string, { tone: Tone; label: string }> = {
+	PENDING: { tone: 'neutral', label: 'Pendiente' },
+	NO_LABELED: { tone: 'warning', label: 'Sin etiquetar' },
+	LABELED: { tone: 'info', label: 'Etiquetado' },
+	VERIFIED: { tone: 'success', label: 'Verificado' },
+};
+
 export const originMeta: Record<string, { tone: Tone; label: string }> = {
 	INTAKE: { tone: 'primary', label: 'Intake (tuya)' },
 	AUTOPRESCRIPTION: { tone: 'info', label: 'Autoprescripción' },

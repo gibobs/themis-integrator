@@ -5,8 +5,8 @@
  * `themis/intake` y `themis/query`. La convención del contrato es `camelCase`
  * (salvo la respuesta del token, que sigue OAuth2 en `snake_case`).
  *
- * Fuera de alcance por ahora (se dejan para más adelante): identidades y
- * documentos.
+ * Fuera de alcance por ahora (se deja para más adelante): la parte de
+ * identidades.
  */
 
 // ── Enums / uniones del dominio ─────────────────────────────────────────────
@@ -374,4 +374,69 @@ export interface ThemisOperationHistoryEntryResource {
 
 export interface ThemisOperationHistoryResult {
 	items: ThemisOperationHistoryEntryResource[];
+}
+
+// ── Query: documentos ─────────────────────────────────────────────────────────
+//
+// Los documentos son **solo lectura / solo descarga**: no hay subida, borrado ni
+// escritura. Se identifican por `operationId` (el ULID público) y quedan aislados
+// por `managementCode` del JWT → 404 si la operación no es de tu ámbito. No
+// aparecen en el change-feed y las lecturas son síncronas (sin patrón 202).
+
+/** Estado de un documento dentro de una operación. */
+export type ThemisDocumentStatus = 'PENDING' | 'NO_LABELED' | 'LABELED' | 'VERIFIED';
+
+/** Un documento de la operación. El listado excluye los de `owner === 'generic'`. */
+export interface ThemisDocumentResource {
+	documentId: string;
+	/** Clave del catálogo documental del banco (p. ej. `NOMINA`, `DNI`, `IRPF`). */
+	type: string;
+	status: ThemisDocumentStatus;
+	name: string;
+	mime?: string;
+	size?: number;
+	/** A quién pertenece el documento (p. ej. un titular o `all`). */
+	owner?: string;
+	/** Nº de página, para documentos multipágina desglosados. */
+	page?: number;
+	createdAt: string;
+}
+
+/** Listado de documentos de una operación. **Sin paginación** (lista acotada). */
+export interface ThemisDocumentListResult {
+	items: ThemisDocumentResource[];
+}
+
+/** Documento requerido para la operación, por clave `owner:type`. */
+export interface ThemisDocumentRequirementResource {
+	owner: string;
+	type: string;
+	mandatory: boolean;
+}
+
+/** Documento presente (en estado `LABELED`/`VERIFIED`), por clave `owner:type`. */
+export interface ThemisPresentDocumentResource {
+	owner: string;
+	type: string;
+	status: ThemisDocumentStatus;
+}
+
+/**
+ * Estado documental de una operación: qué se requiere, qué hay presente y qué
+ * queda pendiente. `pending = required − present` por clave `owner:type`.
+ */
+export interface ThemisDocumentStatusResult {
+	required: ThemisDocumentRequirementResource[];
+	present: ThemisPresentDocumentResource[];
+	pending: ThemisDocumentRequirementResource[];
+}
+
+/**
+ * URL presignada de descarga (S3, TTL ~5 min, `contentDisposition=attachment`).
+ * La descarga va **directa a S3, fuera de Themis** (no pasa por la API).
+ */
+export interface ThemisDocumentUrlResource {
+	url: string;
+	expiresAt: string;
+	contentType?: string;
 }

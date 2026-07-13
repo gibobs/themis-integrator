@@ -33,6 +33,11 @@ Rutas principales:
 - `GET /api/operations/:operationId` — detalle (con PII).
 - `GET /api/operations/:operationId/status` — estado del alta (consulta periódica).
 - `GET /api/operations/:operationId/history` — histórico.
+- `GET /api/operations/:operationId/documents` — documentos (solo lectura).
+- `GET /api/operations/:operationId/documents/status` — estado documental.
+- `GET /api/operations/:operationId/documents/:documentId/url` — URL de descarga efímera.
+- `GET /api/mock/documents/:documentId/download` — descarga simulada (S3), **solo mock**;
+	no pasa por el SDK ni por Themis (ver [documentos](#documentos)).
 - `POST /api/changes` — change-feed (`query.getOperationsChanges`) + progreso `since`.
 - `GET /api/reconciliation/pending` y `POST /api/reconciliation/write-back` —
 	descubrir y conciliar (`intake.listPendingSync` / `intake.syncOperations`).
@@ -76,7 +81,9 @@ Se compone por capas, de abajo a arriba:
 	`getCreationStatus`, `syncOperations` (write-back), `listPendingSync`,
 	`redeemLaunchToken` y `getHandoffStatus`.
 - **`query.ts`** — área de lectura: `listOperations`, `getOperationsChanges`
-	(change-feed), `getOperation` (detalle con PII) y `getOperationHistory`.
+	(change-feed), `getOperation` (detalle con PII), `getOperationHistory` y los tres
+	de **documentos** (`listOperationDocuments`, `getOperationDocumentsStatus`,
+	`getDocumentUrl`), estos últimos por `operationId` (ver [documentos](#documentos)).
 - **`types.ts` / `schema.ts`** — el contrato en TypeScript y su validación con
 	`zod`. Cubren el alta completa: intervinientes (titulares/avalistas), inmueble o
 	subrogación y la **oferta y bonificaciones** opcionales (`ThemisOfferInputDto`:
@@ -84,7 +91,9 @@ Se compone por capas, de abajo a arriba:
 	`costValue ≥ 0`).
 - **`errors.ts`** — `ThemisError` en formato `application/problem+json`
 	(RFC 9457). El campo estable para decidir en código es **`code`** (nunca
-	parsees `detail`).
+	parsees `detail`). El área de documentos de `themis-query` emite la familia
+	**`THEMIS_HTTP_<status>`** (p. ej. `THEMIS_HTTP_404`): el código deriva del
+	status HTTP, no es semántico.
 - **`exchange.ts`** — el tipo `ThemisExchange` (sin `server-only`) que describe un
 	intercambio HTTP capturado; lo comparten el SDK y el inspector de la UI.
 
@@ -224,8 +233,10 @@ de auditoría.
 ## Cómo funciona el mock
 
 El backend simulado respeta la **semántica del contrato** (idempotencia, handoff,
-`202`/`201`, write-back por-ítem, change-feed con `version`) sobre tres tablas:
-`mock_operations`, `mock_idempotency` y `mock_meta` (un contador `versionSeq`).
+`202`/`201`, write-back por-ítem, change-feed con `version`) sobre cinco tablas:
+`mock_operations`, `mock_idempotency`, `mock_meta` (un contador `versionSeq`) y las
+dos de documentos, `mock_documents` y `mock_document_requirements` (ver
+[documentos](#documentos)).
 
 Claves de su comportamiento:
 
@@ -285,6 +296,78 @@ flowchart TD
 ```
 
 ---
+
+## Documentos
+
+Los documentos son **solo lectura / solo descarga**: no hay subida, borrado ni
+escritura. Se identifican por **`operationId`** (el ULID público que el integrador
+ya conoce), no por `externalId`, así que el patrón es **más simple** que el del
+histórico: la ruta BFF pasa el `operationId` directo a Themis, **sin** resolución
+de `externalId` ni `409`. Como en el detalle, hay **aislamiento por marca**: una
+operación fuera de tu ámbito responde **`404`**.
+
+Tres lecturas **síncronas** (sin patrón `202` + seguimiento), todas en
+`themis-query`:
+
+- **Listado** — `GET …/operations/{operationId}/documents` → `{ items: [...] }`.
+	Sin paginación (lista acotada). Excluye los documentos de `owner === 'generic'`.
+- **Estado documental** — `GET …/operations/{operationId}/documents/status` →
+	`{ required, present, pending }`. `present` son los documentos en estado
+	`LABELED`/`VERIFIED`; `pending = required − present` por clave `owner:type`.
+- **URL de descarga** — `GET …/operations/{operationId}/documents/{documentId}/url`
+	→ `{ url, expiresAt, contentType? }`. Es una **URL presignada efímera** (TTL
+	~5 min, `contentDisposition=attachment`). La descarga en sí va **directa a S3,
+	fuera de Themis**: el navegador abre la `url` y baja el binario; la API no
+	interviene.
+
+El estado de un documento es `PENDING | NO_LABELED | LABELED | VERIFIED`. Los
+documentos **no aparecen en el change-feed**: no hay *drift* documental que
+consumir, se consultan **bajo demanda**. Los errores llegan en
+`application/problem+json` con `code = THEMIS_HTTP_<status>` (p. ej.
+`THEMIS_HTTP_404`).
+
+```mermaid
+sequenceDiagram
+	autonumber
+	participant B as Navegador
+	participant BFF as Ruta BFF (/api)
+	participant SDK as SDK Themis
+	participant T as Themis | Mock
+	participant S3 as S3 | Descarga mock
+
+	B->>BFF: GET /api/operations/:id/documents (+ /status)
+	BFF->>SDK: query.listOperationDocuments / getOperationDocumentsStatus
+	SDK->>T: GET /themis/query/v1/operations/:id/documents(/status)
+	T-->>SDK: {items} · {required, present, pending}
+	SDK-->>BFF: datos
+	BFF-->>B: 200 {..., _themis}
+
+	B->>BFF: GET /api/operations/:id/documents/:docId/url
+	BFF->>SDK: query.getDocumentUrl(id, docId)
+	SDK->>T: GET …/documents/:docId/url
+	T-->>SDK: {url, expiresAt}
+	SDK-->>BFF: URL presignada
+	BFF-->>B: 200 {url, expiresAt, _themis}
+	B->>S3: GET url (descarga directa, fuera de Themis)
+	S3-->>B: PDF (attachment) · 410 si expiró
+```
+
+**En el mock.** Se siembran documentos y requisitos para las operaciones `INTAKE`
+(ya `PROCESSED`) en `mock_documents` y `mock_document_requirements`, con una mezcla
+que deja documentos presentes y algún requisito **pendiente**, para que el estado
+documental sea ilustrativo. El endpoint de URL devuelve una `url` que apunta a una
+**ruta local** (`GET /api/mock/documents/:documentId/download`) que simula S3:
+sirve un **PDF de ejemplo** generado en memoria con `Content-Disposition:
+attachment`, valida el `exp` de la URL y responde **`410 Gone`** si ha caducado
+(enseña el TTL). Esa ruta **no** pasa por el SDK ni por Themis y solo existe en
+modo mock. Fiel al filtro de esta rama, el mock emite `THEMIS_HTTP_404` para
+documentos (a diferencia del `THEMIS_OPERATION_NOT_FOUND` que usa para operaciones).
+
+**En la UI.** El detalle de la operación embebe un **panel de Documentos** (carga
+bajo demanda con `apiFetch`) y ofrece una **subpágina dedicada**
+(`/operations/[operationId]/documents`, *server component*) con la vista completa.
+Ambas comparten los componentes de presentación (`DocumentsView`) y de descarga
+(`DocumentDownloadButton`), y cada llamada se ve en el `RequestInspector`.
 
 ## Decisiones de diseño
 

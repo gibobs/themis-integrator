@@ -12,6 +12,8 @@ import {
 	materialize,
 	materializeAll,
 	nextVersion,
+	type MockDocumentRow,
+	type MockRequirementRow,
 	type MockRow,
 } from './store';
 
@@ -138,6 +140,30 @@ export function createMockTransport(): Transport {
 		if (method === 'GET' && historyMatch) {
 			return getHistory(db, decodeURIComponent(historyMatch[1]!), now);
 		}
+
+		// ── query: documentos (solo lectura, por operationId) ────────────────────
+		const docStatusMatch = pathname.match(
+			/^\/themis\/query\/v1\/operations\/([^/]+)\/documents\/status$/,
+		);
+		if (method === 'GET' && docStatusMatch) {
+			return documentsStatus(db, decodeURIComponent(docStatusMatch[1]!));
+		}
+		const docUrlMatch = pathname.match(
+			/^\/themis\/query\/v1\/operations\/([^/]+)\/documents\/([^/]+)\/url$/,
+		);
+		if (method === 'GET' && docUrlMatch) {
+			return documentUrl(
+				db,
+				decodeURIComponent(docUrlMatch[1]!),
+				decodeURIComponent(docUrlMatch[2]!),
+				now,
+			);
+		}
+		const docListMatch = pathname.match(/^\/themis\/query\/v1\/operations\/([^/]+)\/documents$/);
+		if (method === 'GET' && docListMatch) {
+			return listDocuments(db, decodeURIComponent(docListMatch[1]!));
+		}
+
 		const detailMatch = pathname.match(/^\/themis\/query\/v1\/operations\/([^/]+)$/);
 		if (method === 'GET' && detailMatch) {
 			return getDetail(db, decodeURIComponent(detailMatch[1]!), now);
@@ -497,4 +523,104 @@ function getHistory(db: ReturnType<typeof getMockDb>, externalId: string, now: n
 		updatedAt: row.updated_at,
 	}));
 	return json(200, { items: entries });
+}
+
+// ── Documentos (solo lectura) ────────────────────────────────────────────────
+//
+// Fiel al contrato de esta rama: 404 con `THEMIS_HTTP_404` cuando la operación o
+// el documento no son de tu ámbito (el resto del mock usa `THEMIS_OPERATION_NOT_FOUND`
+// para ese caso; aquí se prioriza la fidelidad al filtro `themis-problem.filter.ts`).
+
+function toDocumentResource(row: MockDocumentRow) {
+	return {
+		documentId: row.document_id,
+		type: row.type,
+		status: row.status,
+		name: row.name,
+		mime: row.mime ?? undefined,
+		size: row.size ?? undefined,
+		owner: row.owner ?? undefined,
+		page: row.page ?? undefined,
+		createdAt: row.created_at,
+	};
+}
+
+function listDocuments(db: ReturnType<typeof getMockDb>, operationId: string): RawResponse {
+	if (!findByOperationId(db, operationId)) {
+		return problem(404, 'THEMIS_HTTP_404', 'Operación no encontrada o fuera de tu ámbito.');
+	}
+	// El listado excluye los documentos de owner = 'generic'.
+	const rows = db
+		.prepare(
+			`SELECT * FROM mock_documents
+			 WHERE operation_id = ? AND (owner IS NULL OR owner <> 'generic')
+			 ORDER BY created_at ASC`,
+		)
+		.all(operationId) as MockDocumentRow[];
+	return json(200, { items: rows.map(toDocumentResource) });
+}
+
+function documentsStatus(db: ReturnType<typeof getMockDb>, operationId: string): RawResponse {
+	if (!findByOperationId(db, operationId)) {
+		return problem(404, 'THEMIS_HTTP_404', 'Operación no encontrada o fuera de tu ámbito.');
+	}
+	const required = db
+		.prepare(
+			`SELECT * FROM mock_document_requirements WHERE operation_id = ? ORDER BY owner, type`,
+		)
+		.all(operationId) as MockRequirementRow[];
+	// present = documentos en LABELED/VERIFIED (los genéricos no cuentan).
+	const presentDocs = db
+		.prepare(
+			`SELECT * FROM mock_documents
+			 WHERE operation_id = ? AND status IN ('LABELED', 'VERIFIED')
+			   AND (owner IS NULL OR owner <> 'generic')
+			 ORDER BY created_at ASC`,
+		)
+		.all(operationId) as MockDocumentRow[];
+
+	// Deduplica present por clave owner:type (un requisito puede tener varias páginas).
+	const present: Array<{ owner: string; type: string; status: string }> = [];
+	const presentKeys = new Set<string>();
+	for (const doc of presentDocs) {
+		const key = `${doc.owner ?? ''}:${doc.type}`;
+		if (presentKeys.has(key)) continue;
+		presentKeys.add(key);
+		present.push({ owner: doc.owner ?? '', type: doc.type, status: doc.status });
+	}
+
+	const toRequirement = (r: MockRequirementRow) => ({
+		owner: r.owner,
+		type: r.type,
+		mandatory: r.mandatory === 1,
+	});
+	// pending = required − present por clave owner:type.
+	const pending = required
+		.filter((r) => !presentKeys.has(`${r.owner}:${r.type}`))
+		.map(toRequirement);
+
+	return json(200, { required: required.map(toRequirement), present, pending });
+}
+
+function documentUrl(
+	db: ReturnType<typeof getMockDb>,
+	operationId: string,
+	documentId: string,
+	now: number,
+): RawResponse {
+	const row = db
+		.prepare(`SELECT * FROM mock_documents WHERE document_id = ? AND operation_id = ?`)
+		.get(documentId, operationId) as MockDocumentRow | undefined;
+	if (!row) {
+		return problem(404, 'THEMIS_HTTP_404', 'Documento no encontrado en esta operación.');
+	}
+	const expiresAtMs = now + 300_000; // TTL ~5 min, como la URL presignada real.
+	const expEpoch = Math.floor(expiresAtMs / 1000);
+	// URL "presignada": apunta a la ruta local que simula S3 (fuera de Themis).
+	const url = `/api/mock/documents/${encodeURIComponent(row.document_id)}/download?exp=${expEpoch}&name=${encodeURIComponent(row.name)}`;
+	return json(200, {
+		url,
+		expiresAt: new Date(expiresAtMs).toISOString(),
+		contentType: row.mime ?? 'application/pdf',
+	});
 }

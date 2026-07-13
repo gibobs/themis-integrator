@@ -7,6 +7,9 @@
 import 'server-only';
 import type { ThemisClient } from './client';
 import type {
+	ThemisDocumentListResult,
+	ThemisDocumentStatusResult,
+	ThemisDocumentUrlResource,
 	ThemisListChangesQuery,
 	ThemisListOperationsQuery,
 	ThemisOperationChangeResult,
@@ -55,6 +58,40 @@ export function createQuery(client: ThemisClient) {
 			const res = await client.request<ThemisOperationHistoryResult>({
 				method: 'GET',
 				path: `${QUERY}/operations/${encodeURIComponent(externalId)}/history`,
+			});
+			return res.data;
+		},
+
+		// ── Documentos (solo lectura, por `operationId`) ────────────────────────
+		// 404 si la operación no es de tu ámbito (aislamiento por marca), igual
+		// que el detalle. Sin paginación y sin patrón 202: son lecturas síncronas.
+
+		/** Documentos de una operación (excluye los de `owner === 'generic'`). */
+		async listOperationDocuments(operationId: string): Promise<ThemisDocumentListResult> {
+			const res = await client.request<ThemisDocumentListResult>({
+				method: 'GET',
+				path: `${QUERY}/operations/${encodeURIComponent(operationId)}/documents`,
+			});
+			return res.data;
+		},
+
+		/** Estado documental: requeridos, presentes y pendientes (`required − present`). */
+		async getOperationDocumentsStatus(operationId: string): Promise<ThemisDocumentStatusResult> {
+			const res = await client.request<ThemisDocumentStatusResult>({
+				method: 'GET',
+				path: `${QUERY}/operations/${encodeURIComponent(operationId)}/documents/status`,
+			});
+			return res.data;
+		},
+
+		/** URL presignada de descarga de un documento (efímera, directa a S3). */
+		async getDocumentUrl(
+			operationId: string,
+			documentId: string,
+		): Promise<ThemisDocumentUrlResource> {
+			const res = await client.request<ThemisDocumentUrlResource>({
+				method: 'GET',
+				path: `${QUERY}/operations/${encodeURIComponent(operationId)}/documents/${encodeURIComponent(documentId)}/url`,
 			});
 			return res.data;
 		},
