@@ -1,11 +1,13 @@
 'use client';
 import * as React from 'react';
-import { Check, CircleAlert, PartyPopper, RefreshCw } from 'lucide-react';
+import { Check, CircleAlert, ExternalLink, LogIn, PartyPopper, RefreshCw } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { Callout } from '@/components/ui/callout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { JsonView } from '@/components/ui/json-view';
+import { buttonVariants } from '@/components/ui/button';
 import { RequestInspector } from '@/components/request-inspector';
+import { CopyButton } from '@/components/copy-button';
 import { cn } from '@/lib/util/cn';
 import { apiFetch, ApiError, type WithExchanges } from '@/lib/client/api';
 import type { ThemisExchange } from '@/lib/themis';
@@ -16,6 +18,22 @@ interface CreationStatus {
 	status: 'RECEIVED' | 'PROCESSING' | 'PROCESSED' | 'FAILED' | 'PENDING';
 	error?: string;
 	errorType?: string;
+	/** Solo en handoff PROCESSED: JWT del usuario para entrar a la app de cliente. */
+	accessToken?: string;
+	/** Solo en handoff: `true` si el usuario ya existía antes del alta. */
+	userPreexisted?: boolean;
+}
+
+/** Construye la URL de acceso a Estigia añadiendo `?token=<jwt>` a la URL base.
+ * Devuelve null si la URL base no es válida. */
+function buildEstigiaUrl(baseUrl: string, token: string): string | null {
+	try {
+		const url = new URL(baseUrl);
+		url.searchParams.set('token', token);
+		return url.toString();
+	} catch {
+		return null;
+	}
 }
 
 const STEPS = ['RECEIVED', 'PROCESSING', 'PROCESSED'] as const;
@@ -44,9 +62,15 @@ function pickOperationId(r: Record<string, unknown>): string | undefined {
 export function HandoffLandingClient({
 	launchToken,
 	operationIdHint,
+	estigiaBaseUrl,
+	mock,
 }: {
 	launchToken: string;
 	operationIdHint?: string;
+	/** URL base de Estigia (app de cliente) para entrar con el JWT. Vacía si no está configurada. */
+	estigiaBaseUrl: string;
+	/** Modo mock: en mock el JWT es simulado, así que no ofrecemos entrar a Estigia. */
+	mock: boolean;
 }) {
 	const [status, setStatus] = React.useState<CreationStatus['status']>('RECEIVED');
 	const [operationId, setOperationId] = React.useState<string | null>(operationIdHint ?? null);
@@ -56,6 +80,8 @@ export function HandoffLandingClient({
 	const [rawRedeem, setRawRedeem] = React.useState<unknown>(null);
 	const [noPoll, setNoPoll] = React.useState(false);
 	const [exchanges, setExchanges] = React.useState<ThemisExchange[]>([]);
+	const [accessToken, setAccessToken] = React.useState<string | null>(null);
+	const [userPreexisted, setUserPreexisted] = React.useState<boolean | null>(null);
 
 	React.useEffect(() => {
 		if (!launchToken) return;
@@ -118,6 +144,9 @@ export function HandoffLandingClient({
 					setStatus(s.status);
 					if (s._themis) setExchanges((prev) => [...prev, ...s._themis!]);
 					if (s.status === 'PROCESSED') {
+						// El alta emite un JWT de usuario para entrar a la app de cliente.
+						if (s.accessToken) setAccessToken(s.accessToken);
+						if (typeof s.userPreexisted === 'boolean') setUserPreexisted(s.userPreexisted);
 						setLive(false);
 						return;
 					}
@@ -157,6 +186,8 @@ export function HandoffLandingClient({
 	const currentIndex = STEPS.indexOf(status as (typeof STEPS)[number]);
 	const failed = status === 'FAILED';
 	const done = status === 'PROCESSED';
+	const estigiaUrl =
+		accessToken && estigiaBaseUrl ? buildEstigiaUrl(estigiaBaseUrl, accessToken) : null;
 
 	return (
 		<Card>
@@ -223,6 +254,63 @@ export function HandoffLandingClient({
 							puedes cerrar esta ventana.
 						</span>
 					</Callout>
+				)}
+
+				{/* Cerrar el círculo: entrar a la app de cliente (Estigia) con el JWT del
+				    usuario para comprobar que el token funciona. Solo en modo real; en
+				    mock el token es simulado y Estigia es un dominio externo real. */}
+				{done && !mock && accessToken && (
+					<div className="space-y-3 rounded-md border border-border bg-muted/30 p-4">
+						<div className="flex items-start gap-2">
+							<LogIn className="mt-0.5 size-4 shrink-0 text-primary" />
+							<div className="space-y-1">
+								<p className="text-sm font-medium">Entrar como el usuario</p>
+								<p className="text-xs text-muted-foreground">
+									Abre Estigia (la app de cliente) con el JWT recién emitido para verificar que el
+									token funciona.
+									{userPreexisted !== null &&
+										(userPreexisted
+											? ' El usuario ya existía antes del alta.'
+											: ' El usuario se ha creado nuevo.')}
+								</p>
+							</div>
+						</div>
+
+						{estigiaUrl ? (
+							<div className="space-y-2">
+								<a
+									href={estigiaUrl}
+									target="_blank"
+									rel="noopener noreferrer"
+									className={cn(buttonVariants({ size: 'sm' }))}
+								>
+									<ExternalLink /> Entrar a Estigia
+								</a>
+								<div className="flex items-center gap-1 rounded bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground">
+									<span className="min-w-0 truncate">{estigiaUrl}</span>
+									<CopyButton value={estigiaUrl} className="shrink-0" />
+								</div>
+							</div>
+						) : estigiaBaseUrl ? (
+							<p className="text-xs text-danger">
+								<code>ESTIGIA_BASE_URL</code> no es una URL válida (
+								<code>{estigiaBaseUrl}</code>). Revísala en tu <code>.env.local</code>.
+							</p>
+						) : (
+							<p className="text-xs text-muted-foreground">
+								Configura <code>ESTIGIA_BASE_URL</code> en tu <code>.env.local</code> para abrir
+								Estigia con el JWT. El patrón es{' '}
+								<code>https://dev.estigia.&lt;managementCode&gt;.gibobs.one</code>.
+							</p>
+						)}
+					</div>
+				)}
+
+				{done && mock && (
+					<p className="text-xs text-muted-foreground">
+						En modo real, aquí aparecería un botón para entrar a Estigia (app de cliente) con el JWT
+						del usuario y comprobar que el token funciona.
+					</p>
 				)}
 
 				{failed && (

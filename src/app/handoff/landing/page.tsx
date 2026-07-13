@@ -1,6 +1,7 @@
 import { PageHeader } from '@/components/page-header';
 import { Callout } from '@/components/ui/callout';
 import { findByLaunchToken } from '@/lib/db/operations';
+import { getEstigiaConfig, getThemisConfig } from '@/lib/themis';
 import { HandoffLandingClient } from './landing-client';
 
 export const dynamic = 'force-dynamic';
@@ -32,6 +33,12 @@ export default async function HandoffLandingPage({
 	const operationIdHint =
 		sp.operationId ?? sp.operation_id ?? findByLaunchToken(launchToken)?.operationId ?? undefined;
 
+	// Para "cerrar el círculo": tras el alta, ofrecemos entrar a Estigia (app de
+	// cliente) con el JWT del usuario. La URL base se configura en `.env.local` y
+	// el botón solo aplica en modo real (en mock el token es simulado).
+	const { mock } = getThemisConfig();
+	const { baseUrl: estigiaBaseUrl } = getEstigiaConfig();
+
 	return (
 		<div className="space-y-4">
 			<PageHeader
@@ -45,7 +52,12 @@ export default async function HandoffLandingPage({
 			</Callout>
 
 			{launchToken ? (
-				<HandoffLandingClient launchToken={launchToken} operationIdHint={operationIdHint} />
+				<HandoffLandingClient
+					launchToken={launchToken}
+					operationIdHint={operationIdHint}
+					estigiaBaseUrl={estigiaBaseUrl}
+					mock={mock}
+				/>
 			) : (
 				<Callout tone="warn" title="Falta el launchToken">
 					La URL de continuación debe incluir <code>?launch_token=…</code>.

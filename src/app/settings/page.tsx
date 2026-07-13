@@ -48,6 +48,10 @@ const ENV_VARS: [string, string][] = [
 		'DATABASE_PATH',
 		'Ruta del almacén local SQLite del integrador (por defecto ./data/integrator.db).',
 	],
+	[
+		'ESTIGIA_BASE_URL',
+		'URL de la app de cliente (Estigia) para entrar con el JWT del usuario tras un handoff (?token=…). Solo en modo real. Patrón: https://dev.estigia.<managementCode>.gibobs.one.',
+	],
 ];
 
 export default function SettingsPage() {

@@ -246,6 +246,13 @@ export interface ThemisOperationCreationStatusResource {
 	statusClass?: ThemisCreationStatusClass;
 	attempts?: number;
 	maxAttempts?: number;
+	/**
+	 * Solo en handoff `PROCESSED`: JWT del usuario para iniciar sesión en la app
+	 * de cliente (Estigia), abriéndola con `?token=<accessToken>`.
+	 */
+	accessToken?: string;
+	/** Solo en handoff: `true` si el usuario ya existía antes de este alta. */
+	userPreexisted?: boolean;
 }
 
 // ── Intake: conciliación (write-back) ────────────────────────────────────────

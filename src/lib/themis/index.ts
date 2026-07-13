@@ -8,7 +8,13 @@
  *   const page = await themis.query.listOperations({ linked: 'ALL', limit: 50 });
  */
 import 'server-only';
-import { getThemisConfig, hasCredentials, type ThemisConfig } from './config';
+import {
+	getThemisConfig,
+	getEstigiaConfig,
+	hasCredentials,
+	type ThemisConfig,
+	type EstigiaConfig,
+} from './config';
 import { ThemisClient, createTransport } from './client';
 import { withCapture } from './http';
 import { createIntake, type ThemisIntake } from './intake';
@@ -40,8 +46,8 @@ export async function getThemisClient(): Promise<Themis> {
 	};
 }
 
-export { getThemisConfig, hasCredentials };
-export type { ThemisConfig };
+export { getThemisConfig, getEstigiaConfig, hasCredentials };
+export type { ThemisConfig, EstigiaConfig };
 export { ThemisError } from './errors';
 export type { ThemisProblem, ThemisErrorCode } from './errors';
 export { isAccepted } from './intake';

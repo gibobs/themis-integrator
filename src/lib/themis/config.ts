@@ -45,3 +45,22 @@ export function getThemisConfig(): ThemisConfig {
 export function hasCredentials(cfg: ThemisConfig): boolean {
 	return Boolean(cfg.apiKey && cfg.apiSecret && cfg.token);
 }
+
+export interface EstigiaConfig {
+	/** URL base (origin) de la app de cliente Estigia. Vacía si no está configurada. */
+	baseUrl: string;
+}
+
+/**
+ * Configuración de Estigia (la app de cliente). Sirve para "cerrar el círculo"
+ * del handoff: tras completar el alta, el integrador ofrece abrir Estigia con el
+ * JWT del usuario recién emitido (`?token=<jwt>`) para comprobar que funciona.
+ *
+ * La URL se pone entera a mano en `ESTIGIA_BASE_URL`. El patrón estándar es
+ * `https://dev.estigia.<managementCode>.gibobs.one` (cambia el prefijo según el
+ * entorno o usa el dominio personalizado del tenant); el `managementCode` lo
+ * entrega Gibobs. El integrador solo le añade `?token=<jwt>`.
+ */
+export function getEstigiaConfig(): EstigiaConfig {
+	return { baseUrl: process.env.ESTIGIA_BASE_URL?.trim() ?? '' };
+}
