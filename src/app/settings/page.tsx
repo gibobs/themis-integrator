@@ -50,7 +50,7 @@ const ENV_VARS: [string, string][] = [
 	],
 	[
 		'ESTIGIA_BASE_URL',
-		'URL de la app de cliente (Estigia) para entrar con el JWT del usuario tras un handoff (?token=…). Solo en modo real. Patrón: https://dev.estigia.<managementCode>.gibobs.one.',
+		'URL de la app de cliente (Estigia) para entrar con el JWT del usuario tras un handoff. Solo en modo real. Incluye el sufijo del estilo de acceso, ya que el JWT se concatena al final: https://dev.estigia.<managementCode>.gibobs.one/token/ o https://dev.estigia.<managementCode>.gibobs.one/?token=.',
 	],
 ];
 

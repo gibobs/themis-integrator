@@ -54,12 +54,16 @@ export interface EstigiaConfig {
 /**
  * Configuración de Estigia (la app de cliente). Sirve para "cerrar el círculo"
  * del handoff: tras completar el alta, el integrador ofrece abrir Estigia con el
- * JWT del usuario recién emitido (`?token=<jwt>`) para comprobar que funciona.
+ * JWT del usuario recién emitido para comprobar que funciona.
  *
- * La URL se pone entera a mano en `ESTIGIA_BASE_URL`. El patrón estándar es
- * `https://dev.estigia.<managementCode>.gibobs.one` (cambia el prefijo según el
- * entorno o usa el dominio personalizado del tenant); el `managementCode` lo
- * entrega Gibobs. El integrador solo le añade `?token=<jwt>`.
+ * La URL se pone entera a mano en `ESTIGIA_BASE_URL` e incluye ya el sufijo del
+ * estilo de acceso por token, porque el integrador solo concatena el JWT tal
+ * cual al final. Hay dos estilos según el tenant:
+ * - por ruta: `https://dev.estigia.<managementCode>.gibobs.one/token/`
+ * - por query: `https://dev.estigia.<managementCode>.gibobs.one/?token=`
+ *
+ * Cambia el prefijo `dev.` según el entorno (o usa el dominio personalizado del
+ * tenant); el `managementCode` lo entrega Gibobs.
  */
 export function getEstigiaConfig(): EstigiaConfig {
 	return { baseUrl: process.env.ESTIGIA_BASE_URL?.trim() ?? '' };

@@ -24,13 +24,15 @@ interface CreationStatus {
 	userPreexisted?: boolean;
 }
 
-/** Construye la URL de acceso a Estigia añadiendo `?token=<jwt>` a la URL base.
- * Devuelve null si la URL base no es válida. */
+/** Construye la URL de acceso a Estigia concatenando el JWT al final de la URL
+ * base. La base ya trae el sufijo del estilo de acceso configurado (p. ej.
+ * `.../token/` o `...?token=`), así que solo pegamos el JWT a continuación.
+ * Devuelve null si el resultado no es una URL válida. */
 function buildEstigiaUrl(baseUrl: string, token: string): string | null {
+	const url = baseUrl + token;
 	try {
-		const url = new URL(baseUrl);
-		url.searchParams.set('token', token);
-		return url.toString();
+		new URL(url);
+		return url;
 	} catch {
 		return null;
 	}
@@ -299,8 +301,10 @@ export function HandoffLandingClient({
 						) : (
 							<p className="text-xs text-muted-foreground">
 								Configura <code>ESTIGIA_BASE_URL</code> en tu <code>.env.local</code> para abrir
-								Estigia con el JWT. El patrón es{' '}
-								<code>https://dev.estigia.&lt;managementCode&gt;.gibobs.one</code>.
+								Estigia con el JWT. Incluye el sufijo del estilo de acceso, ya que el JWT se
+									concatena tal cual al final: p. ej.{' '}
+								<code>https://dev.estigia.&lt;managementCode&gt;.gibobs.one/token/</code> o{' '}
+									<code>https://dev.estigia.&lt;managementCode&gt;.gibobs.one/?token=</code>.
 							</p>
 						)}
 					</div>
