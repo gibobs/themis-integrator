@@ -36,7 +36,7 @@ export function AppShell({
 				</Link>
 				<Nav />
 				<div className="mt-auto border-t border-border p-3 text-xs text-muted-foreground">
-					Consume la API de Themis como un integrador externo.
+					El cambio es la oportunidad; la integración, el camino.
 				</div>
 			</aside>
 
