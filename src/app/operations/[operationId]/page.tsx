@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ArrowLeft, FileText } from 'lucide-react';
+import { ArrowLeft, FileText, Webhook } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Callout } from '@/components/ui/callout';
@@ -263,6 +263,40 @@ export default async function OperationDetailPage({
 						</CardHeader>
 						<CardContent>
 							<DocumentsPanel operationId={operationId} />
+						</CardContent>
+					</Card>
+
+					<Card className="md:col-span-2">
+						<CardHeader>
+							<CardTitle>Expediente electrónico (back-office)</CardTitle>
+							<p className="text-sm text-muted-foreground">
+								Efecto del webhook entrante <code>UNDERWRITING_CASE_ASSIGNED</code>: se confirma
+								consultando el detalle de la operación (no re-aflora en el change-feed).
+							</p>
+						</CardHeader>
+						<CardContent>
+							{detail.underwritingCase ? (
+								<div className="grid gap-x-8 md:grid-cols-2">
+									<Row label="underwritingCaseId">
+										<span className="font-mono text-xs">
+											{detail.underwritingCase.underwritingCaseId}
+										</span>
+									</Row>
+									<Row label="Asignado">{dateTime(detail.underwritingCase.processedAt)}</Row>
+								</div>
+							) : (
+								<div className="flex flex-wrap items-center justify-between gap-3">
+									<p className="text-sm text-muted-foreground">
+										Aún no hay expediente asignado para esta operación.
+									</p>
+									<Link
+										href={`/webhooks?operationId=${encodeURIComponent(operationId)}`}
+										className="inline-flex h-9 items-center gap-2 rounded-md border border-input bg-card px-4 text-sm font-medium hover:bg-accent hover:text-accent-foreground"
+									>
+										<Webhook className="size-4" /> Empujar evento
+									</Link>
+								</div>
+							)}
 						</CardContent>
 					</Card>
 				</div>

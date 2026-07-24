@@ -44,6 +44,11 @@ export const milestoneSourceMeta: Record<string, { tone: Tone; label: string }> 
 	REQUIREMENTS: { tone: 'neutral', label: 'Requisitos' },
 };
 
+export const webhookOutcomeMeta: Record<string, { tone: Tone; label: string }> = {
+	ACCEPTED: { tone: 'success', label: 'Aceptado' },
+	RESENT: { tone: 'info', label: 'Reenviado' },
+};
+
 export const originMeta: Record<string, { tone: Tone; label: string }> = {
 	INTAKE: { tone: 'primary', label: 'Intake (tuya)' },
 	AUTOPRESCRIPTION: { tone: 'info', label: 'Autoprescripción' },

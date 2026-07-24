@@ -72,8 +72,29 @@ function migrate(db: Database.Database): void {
 			note        TEXT
 		);
 
+		-- Eventos de webhook entrante emitidos hacia Themis. Guarda el estado del
+		-- sourceEventId por operación (la clave única) y la trazabilidad del sobre
+		-- empujado y su respuesta (event_ref, received_at). Es el lado del
+		-- integrador: la secuencia por operación se autogestiona aquí.
+		CREATE TABLE IF NOT EXISTS webhook_events (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			operation_id    TEXT NOT NULL,
+			source_event_id INTEGER NOT NULL,   -- entero creciente y único por operación
+			type            TEXT NOT NULL,
+			occurred_at     TEXT,
+			payload_json    TEXT NOT NULL,      -- snapshot del payload empujado
+			event_ref       TEXT,               -- referencia que devuelve Themis (202)
+			received_at     TEXT,
+			outcome         TEXT NOT NULL,      -- ACCEPTED | RESENT
+			http_status     INTEGER,
+			created_at      TEXT NOT NULL,
+			updated_at      TEXT NOT NULL,
+			UNIQUE(operation_id, source_event_id)
+		);
+
 		CREATE INDEX IF NOT EXISTS idx_operations_created ON operations(created_at DESC);
 		CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts DESC);
+		CREATE INDEX IF NOT EXISTS idx_webhook_events_op ON webhook_events(operation_id);
 	`);
 }
 

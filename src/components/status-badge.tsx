@@ -8,11 +8,19 @@ import {
 	milestoneStatusMeta,
 	originMeta,
 	syncStatusMeta,
+	webhookOutcomeMeta,
 	type Tone,
 } from '@/lib/status';
 
 type Kind =
-	'creation' | 'business' | 'sync' | 'origin' | 'document' | 'milestone' | 'milestoneSource';
+	| 'creation'
+	| 'business'
+	| 'sync'
+	| 'origin'
+	| 'document'
+	| 'milestone'
+	| 'milestoneSource'
+	| 'webhookOutcome';
 
 const tables: Record<Kind, Record<string, { tone: Tone; label: string }>> = {
 	creation: creationStatusMeta,
@@ -22,6 +30,7 @@ const tables: Record<Kind, Record<string, { tone: Tone; label: string }>> = {
 	document: documentStatusMeta,
 	milestone: milestoneStatusMeta,
 	milestoneSource: milestoneSourceMeta,
+	webhookOutcome: webhookOutcomeMeta,
 };
 
 export function StatusBadge({ kind, value }: { kind: Kind; value: string | null | undefined }) {

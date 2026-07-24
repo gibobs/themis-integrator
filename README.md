@@ -38,6 +38,11 @@ de principio a fin **sin credenciales**.
 	change-feed: éste sigue el *drift* de estado/etapa; aquél, los hitos de negocio.
 - **Conciliación con write-back**: ingieres operaciones sin `externalId` (p. ej.
 	autoprescripciones) y las enlazas a tu referencia.
+- **Webhook entrante (emisión de eventos)**: empujas eventos de back-office a
+	Themis (`POST /themis/webhook/v1/events`) —hoy `UNDERWRITING_CASE_ASSIGNED`—
+	autogestionando el `sourceEventId` (idempotencia y orden) y confirmando el
+	**efecto** en el **detalle** de la operación. Ver
+	[abajo](#webhook-entrante-emisión-de-eventos).
 - **Documentos (solo lectura)**: consultas los documentos de una operación y su
 	**estado documental** (requeridos / presentes / pendientes), y obtienes una
 	**URL de descarga efímera** (directa a S3, fuera de Themis) para bajar cada uno.
@@ -48,9 +53,11 @@ de principio a fin **sin credenciales**.
 	**españolas** ([`@faker-js/faker`](https://fakerjs.dev)) y rellena **todos** los
 	campos —incluidos intervinientes y oferta— con valores distintos en cada clic.
 
-El modelo de interacción es **empujar y consultar**: tú empujas el alta y
-consultas el resultado. Hoy **Themis nunca te llama**; en el futuro habrá aviso
-por notificación saliente (webhook), y la consulta periódica seguirá siendo válida.
+El modelo de interacción es **empujar y consultar**: tú empujas (altas y **eventos
+de webhook**) y consultas el resultado. El **webhook de Themis es _entrante_**: eres
+tú quien empuja el evento y Themis responde `202`. Hoy **Themis nunca te llama**; en
+el futuro habrá además aviso por notificación **saliente** (Themis → tú), y la
+consulta periódica seguirá siendo válida.
 
 > **Fuera de alcance (por ahora):** la parte de **identidad** de Themis no está
 > cubierta en este integrador de referencia.
@@ -92,6 +99,40 @@ credenciales.
 
 ---
 
+## Webhook entrante (emisión de eventos)
+
+El **webhook de Themis es _entrante_**: no es Themis quien te llama, sino **tú**
+quien **empuja** eventos de tu back-office a Themis mediante
+`POST /themis/webhook/v1/events`, y Themis responde `202`. No hay suscripciones ni
+firma HMAC ni secreto de webhook: la autenticidad es la **misma** que en el resto
+de endpoints (el **token M2M** `Bearer`).
+
+Hoy existe un único evento, `UNDERWRITING_CASE_ASSIGNED`, con el payload
+`{ underwritingCaseId, processedAt }`. El enum de tipos es **aditivo** (pueden
+aparecer más sin romper el contrato).
+
+**El orden y la idempotencia los gestionas tú** con el `sourceEventId`: un entero
+**estrictamente creciente y único por operación** (una sola secuencia por
+operación, compartida entre todos los `type`). Con él:
+
+- **Replay idempotente**: reenviar el **mismo** `(operationId, sourceEventId)`
+	devuelve el **mismo** `eventRef`; no duplica el efecto.
+- **Fuera de orden**: un `sourceEventId` **inferior** al último ya visto para esa
+	operación se **descarta** (no aplica el efecto), aunque el sobre se acepte.
+
+El `202` **valida el sobre, no el efecto**. El efecto —el expediente electrónico
+asignado— **no re-aflora en el change-feed** (es un cambio que ya tienes mapeado en
+tu lado): se **confirma consultando el detalle** de la operación por su
+`operationId`. La pantalla **Webhooks** te deja construir el sobre, sugerir y editar
+el `sourceEventId` (para demostrar replay y fuera de orden) y reenviar cada evento;
+el efecto aparece en la tarjeta **«Expediente electrónico»** del detalle.
+
+Errores del receptor: `422 THEMIS_VALIDATION` (sobre o payload inválidos), `401` y
+`403`. El integrador guarda cada evento emitido en su almacén local
+(`webhook_events`), donde autogestiona la secuencia por operación.
+
+---
+
 ## Arquitectura en breve
 
 - **Next 16 (App Router) + React 19 + TypeScript + Tailwind v4.**
@@ -99,7 +140,7 @@ credenciales.
 	**rutas BFF** en `/api`, que se ejecutan solo en el servidor. El navegador
 	habla únicamente con esas rutas.
 - **SDK de Themis** en `src/lib/themis`: resuelve el entorno, canjea el token M2M,
-	aplica idempotencia/`Prefer` y expone las áreas `intake` y `query`.
+	aplica idempotencia/`Prefer` y expone las áreas `intake`, `query` y `webhooks`.
 - **Almacén local del integrador** en **SQLite** (`better-sqlite3`) en
 	`src/lib/db`: el mapeo `externalId ↔ operationId`, el estado conocido, el
 	progreso del change-feed y un log de auditoría.

@@ -100,11 +100,48 @@ function migrate(db: Database.Database): void {
 			version        INTEGER NOT NULL,
 			payload_json   TEXT
 		);
+		-- Buzón de eventos de webhook entrante recibidos (el "receptor" de Themis).
+		-- La idempotencia y el orden se gobiernan con source_event_id (único por
+		-- operación); applied=1 solo si el evento aplicó su efecto (no fue replay ni
+		-- fuera de orden).
+		CREATE TABLE IF NOT EXISTS mock_webhook_inbox (
+			event_ref       TEXT PRIMARY KEY,
+			operation_id    TEXT NOT NULL,
+			source_event_id INTEGER NOT NULL,
+			type            TEXT NOT NULL,
+			occurred_at     TEXT,
+			payload_json    TEXT NOT NULL,
+			received_at     TEXT NOT NULL,
+			applied         INTEGER NOT NULL DEFAULT 0,
+			UNIQUE(operation_id, source_event_id)
+		);
 	`);
+	// Efecto del evento UNDERWRITING_CASE_ASSIGNED sobre la operación. Se añade con
+	// un helper idempotente para que una themis-mock.db creada antes de esta parte
+	// también reciba las columnas al arrancar (sin `yarn db:reset`).
+	addColumnIfMissing(db, 'mock_operations', 'underwriting_case_id', 'TEXT');
+	addColumnIfMissing(db, 'mock_operations', 'underwriting_case_at', 'TEXT');
 	const seq = db.prepare(`SELECT v FROM mock_meta WHERE k = 'versionSeq'`).get() as
 		| { v: number }
 		| undefined;
 	if (!seq) db.prepare(`INSERT INTO mock_meta (k, v) VALUES ('versionSeq', 0)`).run();
+}
+
+/**
+ * Añade una columna a una tabla solo si aún no existe (consulta `PRAGMA
+ * table_info`). Idempotente: seguro de llamar en cada arranque, también sobre
+ * bases ya creadas antes de introducir la columna.
+ */
+function addColumnIfMissing(
+	db: Database.Database,
+	table: string,
+	column: string,
+	definition: string,
+): void {
+	const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+	if (!cols.some((c) => c.name === column)) {
+		db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+	}
 }
 
 export function nextVersion(db: Database.Database): number {
@@ -132,8 +169,21 @@ export interface MockRow {
 	launch_token: string | null;
 	session_token: string | null;
 	version: number;
+	underwriting_case_id: string | null;
+	underwriting_case_at: string | null;
 	created_at: string;
 	updated_at: string;
+}
+
+export interface MockWebhookInboxRow {
+	event_ref: string;
+	operation_id: string;
+	source_event_id: number;
+	type: string;
+	occurred_at: string | null;
+	payload_json: string;
+	received_at: string;
+	applied: number;
 }
 
 export interface MockDocumentRow {

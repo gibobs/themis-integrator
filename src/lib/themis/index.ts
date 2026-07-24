@@ -19,6 +19,7 @@ import { ThemisClient, createTransport } from './client';
 import { withCapture } from './http';
 import { createIntake, type ThemisIntake } from './intake';
 import { createQuery, type ThemisQuery } from './query';
+import { createWebhooks, type ThemisWebhooks } from './webhooks';
 import type { ThemisExchange } from './exchange';
 
 export interface Themis {
@@ -26,6 +27,7 @@ export interface Themis {
 	client: ThemisClient;
 	intake: ThemisIntake;
 	query: ThemisQuery;
+	webhooks: ThemisWebhooks;
 	/** Intercambios HTTP con Themis registrados durante la vida de este cliente. */
 	getExchanges: () => ThemisExchange[];
 }
@@ -42,6 +44,7 @@ export async function getThemisClient(): Promise<Themis> {
 		client,
 		intake: createIntake(client),
 		query: createQuery(client),
+		webhooks: createWebhooks(client),
 		getExchanges: () => exchanges,
 	};
 }
