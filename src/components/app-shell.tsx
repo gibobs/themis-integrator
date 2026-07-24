@@ -1,5 +1,6 @@
 import Link from 'next/link';
-import { Boxes, FlaskConical, Radio } from 'lucide-react';
+import Image from 'next/image';
+import { FlaskConical, Radio } from 'lucide-react';
 import { Nav } from '@/components/nav';
 import { Badge } from '@/components/ui/badge';
 
@@ -16,11 +17,21 @@ export function AppShell({
 	return (
 		<div className="flex min-h-screen">
 			<aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-card md:flex">
-				<Link href="/" className="flex items-center gap-2 border-b border-border px-5 py-4">
-					<Boxes className="size-5 text-primary" />
+				<Link href="/" className="flex items-center gap-2.5 border-b border-border px-5 py-4">
+					{/* Logo monocromo: en tema oscuro se invierte para conservar contraste. */}
+					<Image
+						src="/logo.png"
+						alt="Gibobs Technology"
+						width={28}
+						height={28}
+						priority
+						className="shrink-0 dark:invert"
+					/>
 					<div className="leading-tight">
-						<div className="text-sm font-semibold">themis-integrator</div>
-						<div className="text-xs text-muted-foreground">Integrador de referencia</div>
+						<div className="text-sm font-semibold">Themis</div>
+						<div className="text-[10px] font-medium tracking-wide text-muted-foreground/80">
+							By Gibobs Technology
+						</div>
 					</div>
 				</Link>
 				<Nav />
@@ -32,8 +43,15 @@ export function AppShell({
 			<div className="flex min-w-0 flex-1 flex-col">
 				<header className="flex h-14 items-center justify-between gap-3 border-b border-border bg-card/60 px-5 backdrop-blur">
 					<div className="flex items-center gap-2 text-sm text-muted-foreground md:hidden">
-						<Boxes className="size-4 text-primary" />
+						<Image
+							src="/logo.png"
+							alt="Gibobs Technology"
+							width={20}
+							height={20}
+							className="shrink-0 dark:invert"
+						/>
 						<span className="font-semibold text-foreground">themis-integrator</span>
+						<span className="text-xs text-muted-foreground">· By Gibobs Technology</span>
 					</div>
 					<div className="ml-auto flex items-center gap-2">
 						<Badge tone="neutral" className="gap-1">

@@ -32,6 +32,10 @@ de principio a fin **sin credenciales**.
 	personales**; el detalle trae la PII y se consulta **una operación cada vez**.
 - **Change-feed (*drift*)**: descubres cambios de estado/etapa de tus operaciones
 	de forma incremental por *cursor*.
+- **Feed de hitos (HITOS)**: descubres transiciones de **negocio** —hitos
+	`ACHIEVED`/`REVOKED` con su `source` (`CORE` / `DOCS` / `BACKOFFICE` /
+	`REQUIREMENTS`)— de forma incremental por *cursor*. Es un feed **separado** del
+	change-feed: éste sigue el *drift* de estado/etapa; aquél, los hitos de negocio.
 - **Conciliación con write-back**: ingieres operaciones sin `externalId` (p. ej.
 	autoprescripciones) y las enlazas a tu referencia.
 - **Documentos (solo lectura)**: consultas los documentos de una operación y su
@@ -174,6 +178,7 @@ src/
 │   │   └── [operationId]/              #   detalle + seguimiento + histórico + panel de documentos
 │   │       └── documents/page.tsx      #   subpágina: vista completa de documentos
 │   ├── changes/                        # UI: change-feed (drift)
+│   ├── milestones/                     # UI: feed de hitos (HITOS de negocio)
 │   ├── reconciliation/                 # UI: conciliación + write-back
 │   ├── settings/                       # UI: entorno, variables y reset de datos
 │   ├── handoff/landing/                # landing de continuación del handoff (canje + estado)
@@ -182,6 +187,7 @@ src/
 │       │   └── [operationId]/documents #   GET listado · estado · URL de descarga (solo lectura)
 │       ├── mock/documents/…/download   #   descarga simulada (S3) del PDF de ejemplo — solo mock
 │       ├── changes/route.ts            #   POST change-feed
+│       ├── milestones/route.ts         #   POST feed de hitos
 │       ├── reconciliation/             #   GET pending · POST write-back
 │       ├── handoff/                    #   POST redeem · GET status
 │       └── settings/reset/route.ts     #   POST vaciar almacén local
@@ -197,7 +203,7 @@ src/
     │   ├── http.ts                     #   transporte, reintentos con backoff, captura de intercambios
     │   ├── client.ts                   #   request autenticado (Prefer, Idempotency-Key)
     │   ├── intake.ts                   #   alta, estado, write-back, handoff
-    │   ├── query.ts                    #   listado, change-feed, detalle, histórico, documentos
+    │   ├── query.ts                    #   listado, change-feed, feed de hitos, detalle, histórico, documentos
     │   ├── errors.ts                   #   ThemisError (application/problem+json)
     │   ├── exchange.ts                 #   tipo del intercambio HTTP (para el inspector)
     │   ├── schema.ts                   #   validación (zod): alta, intervinientes y oferta
@@ -206,7 +212,7 @@ src/
     ├── db/                             # almacén local del integrador (integrator.db)
     │   ├── db.ts                       #   conexión SQLite + migración
     │   ├── operations.ts               #   operaciones (externalId ↔ operationId)
-    │   ├── feed.ts                     #   progreso del change-feed (since)
+    │   ├── feed.ts                     #   progreso del change-feed y del feed de hitos (since)
     │   └── audit.ts                    #   log de auditoría de llamadas
     ├── server/respond.ts               # audited() + problemResponse() + withExchanges()
     ├── client/api.ts                   # apiFetch + ApiError (navegador → BFF, con _themis)
@@ -236,10 +242,15 @@ src/
 5. **Descubrir cambios** (`/changes`): consumes el change-feed por *cursor* para
 	enterarte del *drift* (cambios de estado/etapa) de tus operaciones. Los
 	documentos **no** aparecen en el change-feed.
-6. **Conciliar** (`/reconciliation`): localizas operaciones sin `externalId` (p. ej.
+6. **Descubrir hitos** (`/milestones`): consumes el feed de hitos por *cursor* para
+	enterarte de las **transiciones de negocio** (hitos `ACHIEVED`/`REVOKED` con su
+	`source`) de tus operaciones. Es un feed **distinto** del change-feed: aquí no ves
+	el *drift* de estado/etapa, sino los hitos de negocio; puedes filtrarlo por tipo,
+	estado y `source`.
+7. **Conciliar** (`/reconciliation`): localizas operaciones sin `externalId` (p. ej.
 	autoprescripciones), les asignas tu referencia y haces el **write-back** para
 	enlazarlas en Themis.
-7. **Revisar la auditoría** (`/settings`): consultas el log local de las llamadas a
+8. **Revisar la auditoría** (`/settings`): consultas el log local de las llamadas a
 	Themis (método, ruta, status, código y duración).
 
 En **todas** estas pantallas puedes abrir el desplegable *«Petición(es) a Themis»*

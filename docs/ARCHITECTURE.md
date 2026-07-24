@@ -39,6 +39,10 @@ Rutas principales:
 - `GET /api/mock/documents/:documentId/download` — descarga simulada (S3), **solo mock**;
 	no pasa por el SDK ni por Themis (ver [documentos](#documentos)).
 - `POST /api/changes` — change-feed (`query.getOperationsChanges`) + progreso `since`.
+- `POST /api/milestones` — feed de hitos (`query.getOperationsMilestones`) + progreso
+	`since` por `milestoneFeedKey(filters)`. **No** hace `absorbDiscovered`: los hitos
+	son transiciones de negocio, no filas del índice de operaciones (ver
+	[decisiones de diseño](#decisiones-de-diseño)).
 - `GET /api/reconciliation/pending` y `POST /api/reconciliation/write-back` —
 	descubrir y conciliar (`intake.listPendingSync` / `intake.syncOperations`).
 - `POST /api/handoff/redeem` y `GET /api/handoff/status` — canje del launchToken y
@@ -81,8 +85,9 @@ Se compone por capas, de abajo a arriba:
 	`getCreationStatus`, `syncOperations` (write-back), `listPendingSync`,
 	`redeemLaunchToken` y `getHandoffStatus`.
 - **`query.ts`** — área de lectura: `listOperations`, `getOperationsChanges`
-	(change-feed), `getOperation` (detalle con PII), `getOperationHistory` y los tres
-	de **documentos** (`listOperationDocuments`, `getOperationDocumentsStatus`,
+	(change-feed), `getOperationsMilestones` (feed de hitos: transiciones de negocio
+	`ACHIEVED`/`REVOKED`), `getOperation` (detalle con PII), `getOperationHistory` y los
+	tres de **documentos** (`listOperationDocuments`, `getOperationDocumentsStatus`,
 	`getDocumentUrl`), estos últimos por `operationId` (ver [documentos](#documentos)).
 - **`types.ts` / `schema.ts`** — el contrato en TypeScript y su validación con
 	`zod`. Cubren el alta completa: intervinientes (titulares/avalistas), inmueble o
@@ -217,10 +222,12 @@ por las lecturas (`business_status`, `stage`, `substage`), además de `origin`,
 
 ### `feed_state`
 
-El **progreso del change-feed**. Una fila por combinación de filtros
-(`feed_key`, p. ej. `changes:ALL:LINKED`) con el último `since` (la última
-`version` procesada). Así el consumo del feed es **incremental**: retomas donde lo
-dejaste.
+El **progreso de los feeds incrementales**. Una fila por combinación de filtros
+(`feed_key`) con el último `since` (la última `version` procesada). Así el consumo
+es **incremental**: retomas donde lo dejaste. El change-feed usa claves
+`changes:<origin>:<linked>` (p. ej. `changes:ALL:LINKED`); el feed de hitos,
+`milestones` (sin filtros) o `milestones:sources=…;status=…;types=…`
+(`milestoneFeedKey(filters)`, con partes y valores ordenados alfabéticamente).
 
 ### `audit_log`
 
@@ -233,9 +240,11 @@ de auditoría.
 ## Cómo funciona el mock
 
 El backend simulado respeta la **semántica del contrato** (idempotencia, handoff,
-`202`/`201`, write-back por-ítem, change-feed con `version`) sobre cinco tablas:
-`mock_operations`, `mock_idempotency`, `mock_meta` (un contador `versionSeq`) y las
-dos de documentos, `mock_documents` y `mock_document_requirements` (ver
+`202`/`201`, write-back por-ítem, change-feed y feed de hitos con `version`) sobre
+seis tablas: `mock_operations`, `mock_idempotency`, `mock_meta` (un contador
+`versionSeq`), `mock_milestones` (las transiciones de hito que sirve el feed de
+hitos, sembradas con el catálogo real de `milestoneType` del core) y las dos de
+documentos, `mock_documents` y `mock_document_requirements` (ver
 [documentos](#documentos)).
 
 Claves de su comportamiento:
@@ -380,9 +389,15 @@ Ambas comparten los componentes de presentación (`DocumentsView`) y de descarga
 	*backoff* exponencial y `Retry-After`. El **navegador** consulta el estado del
 	alta con *backoff* acotado (`backoffSchedule`) hasta un estado terminal, para no
 	martillear la API.
-- **Cursores opacos.** La paginación y el change-feed usan *cursores* que **no
-	debes interpretar**: guarda el `nextCursor` (o el `since`) y devuélvelo tal cual
-	en la siguiente petición.
+- **Cursores opacos.** La paginación, el change-feed y el feed de hitos usan
+	*cursores* que **no debes interpretar**: guarda el `nextCursor` (o el `since`) y
+	devuélvelo tal cual en la siguiente petición.
+- **Dos feeds distintos, misma mecánica.** El **change-feed** sigue el *drift* de
+	estado/etapa de la operación; el **feed de hitos** sigue las transiciones de
+	**negocio** (hitos `ACHIEVED`/`REVOKED` con su `source`). Comparten el patrón
+	incremental (`version`, `since`, *cursor*, progreso en `feed_state`) pero son
+	endpoints y claves de feed **separados**, y el de hitos **no** absorbe filas en el
+	índice de operaciones (no son operaciones, son eventos de negocio).
 - **Separación índice / detalle como decisión de seguridad.** Los listados y el
 	change-feed son un **índice sin datos personales**; el **detalle** (con PII) se
 	consulta **una operación cada vez**.

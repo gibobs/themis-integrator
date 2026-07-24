@@ -13,6 +13,7 @@ import {
 	materializeAll,
 	nextVersion,
 	type MockDocumentRow,
+	type MockMilestoneRow,
 	type MockRequirementRow,
 	type MockRow,
 } from './store';
@@ -135,6 +136,9 @@ export function createMockTransport(): Transport {
 		}
 		if (method === 'POST' && pathname === '/themis/query/v1/operations/changes') {
 			return getChanges(db, body, now);
+		}
+		if (method === 'POST' && pathname === '/themis/query/v1/operations/milestones') {
+			return getMilestones(db, body, now);
 		}
 		const historyMatch = pathname.match(/^\/themis\/query\/v1\/operations\/([^/]+)\/history$/);
 		if (method === 'GET' && historyMatch) {
@@ -480,6 +484,71 @@ function getChanges(
 			version: String(r.version),
 			createdAt: r.created_at,
 			updatedAt: r.updated_at,
+		})),
+		hasMore,
+		nextCursor: hasMore ? encodeCursor(base + limit) : undefined,
+	});
+}
+
+function getMilestones(
+	db: ReturnType<typeof getMockDb>,
+	body: Record<string, unknown>,
+	now: number,
+): RawResponse {
+	materializeAll(db, now);
+	const limit = Math.min(Number(body.limit) || 50, 500);
+	const cursorOffset = body.cursor ? decodeCursor(body.cursor as string) : null;
+	const since = body.since ? Number(body.since) : 0;
+
+	const filters = (body.filters ?? {}) as {
+		types?: unknown;
+		status?: unknown;
+		sources?: unknown;
+		operationIds?: unknown;
+		occurredFrom?: unknown;
+		occurredTo?: unknown;
+	};
+	const asList = (v: unknown): string[] | null =>
+		Array.isArray(v) && v.length > 0 ? v.map((x) => String(x)) : null;
+	const types = asList(filters.types);
+	const statuses = asList(filters.status);
+	const sources = asList(filters.sources);
+	const operationIds = asList(filters.operationIds);
+	const occurredFrom = filters.occurredFrom ? String(filters.occurredFrom) : null;
+	const occurredTo = filters.occurredTo ? String(filters.occurredTo) : null;
+
+	// Orden estable por `version` ascendente (la misma que alimenta `since`).
+	let rows = db
+		.prepare(`SELECT * FROM mock_milestones ORDER BY version ASC`)
+		.all() as MockMilestoneRow[];
+
+	// Filtros: todos opcionales y en AND (IN sobre columnas, cotas sobre occurred_at).
+	rows = rows.filter((r) => {
+		if (types && !types.includes(r.milestone_type)) return false;
+		if (statuses && !statuses.includes(r.status)) return false;
+		if (sources && !sources.includes(r.source)) return false;
+		if (operationIds && !operationIds.includes(r.operation_id)) return false;
+		if (occurredFrom && (r.occurred_at === null || r.occurred_at < occurredFrom)) return false;
+		if (occurredTo && (r.occurred_at === null || r.occurred_at > occurredTo)) return false;
+		return true;
+	});
+
+	// `cursor` (OFFSET) tiene prioridad sobre `since` (version > since).
+	const startOffset =
+		cursorOffset !== null ? cursorOffset : rows.findIndex((r) => r.version > since);
+	const base = startOffset < 0 ? rows.length : startOffset;
+	const hasMore = rows.length > base + limit;
+	const page = rows.slice(base, base + limit);
+
+	return json(200, {
+		items: page.map((r) => ({
+			operationId: r.operation_id,
+			milestoneType: r.milestone_type,
+			status: r.status,
+			source: r.source,
+			occurredAt: r.occurred_at ?? null,
+			version: String(r.version),
+			payload: r.payload_json ? JSON.parse(r.payload_json) : null,
 		})),
 		hasMore,
 		nextCursor: hasMore ? encodeCursor(base + limit) : undefined,

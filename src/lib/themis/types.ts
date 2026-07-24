@@ -358,6 +358,68 @@ export interface ThemisOperationChangeResult {
 	items: ThemisOperationChangeResource[];
 }
 
+// ── Query: feed de hitos (HITOS) ─────────────────────────────────────────────
+//
+// Feed *separado* del change-feed. El change-feed refleja el *drift* de
+// estado/etapa de la operación; el feed de hitos publica las transiciones de
+// *negocio* (los HITOS) que la operación cumple o deja de cumplir a lo largo del
+// tiempo. Un mismo `(operationId, milestoneType)` puede recurrir en el tiempo
+// (`ACHIEVED` ↔ `REVOKED`); aplica las transiciones en orden de `version`. Es un
+// índice *sin datos personales*.
+
+/** Transición de un hito: cumplido o revocado (la operación dejó de cumplirlo). */
+export type ThemisMilestoneStatus = 'ACHIEVED' | 'REVOKED';
+
+/** Origen de una transición de hito. */
+export type ThemisMilestoneSource = 'CORE' | 'DOCS' | 'BACKOFFICE' | 'REQUIREMENTS';
+
+/**
+ * Una transición de hito. Sin PII. El `milestoneType` es el código del catálogo
+ * (p. ej. `OPERATION_CREATED`, `READY_TO_BANK`, `DOCUMENTATION_COMPLETE`).
+ */
+export interface ThemisOperationMilestoneItem {
+	operationId: string;
+	milestoneType: string;
+	/** Transición. `REVOKED` = la operación dejó de cumplir el hito. */
+	status: ThemisMilestoneStatus;
+	source: ThemisMilestoneSource;
+	occurredAt: string | null;
+	/** Marca de progreso, creciente. Guarda el máximo y reenvíalo como `since`. */
+	version: string;
+	/** Escalares sin PII; p. ej. el motivo del `REVOKED`. */
+	payload?: Record<string, unknown> | null;
+}
+
+/** Filtros del feed de hitos. Todos opcionales y combinables (AND). */
+export interface ThemisMilestoneFeedFilters {
+	/** Uno o varios `milestoneType`. */
+	types?: string[];
+	/** p. ej. solo `REVOKED` para reaccionar a pérdidas. */
+	status?: ThemisMilestoneStatus[];
+	sources?: ThemisMilestoneSource[];
+	/** Acotar a operaciones concretas. */
+	operationIds?: string[];
+	/** ISO-8601; cota inferior de `occurredAt`. */
+	occurredFrom?: string;
+	/** ISO-8601; cota superior de `occurredAt`. */
+	occurredTo?: string;
+}
+
+export interface ThemisMilestoneFeedQuery {
+	cursor?: string;
+	/** Última `version` procesada. Ignorado si se envía `cursor`. */
+	since?: string;
+	/** Tamaño de página (default 50, máx 500). */
+	limit: number;
+	filters?: ThemisMilestoneFeedFilters;
+}
+
+export interface ThemisOperationMilestoneFeedResult {
+	nextCursor?: string;
+	hasMore: boolean;
+	items: ThemisOperationMilestoneItem[];
+}
+
 // ── Query: detalle + histórico ───────────────────────────────────────────────
 
 export interface ThemisOperationDetailResource extends ThemisOperationResource {

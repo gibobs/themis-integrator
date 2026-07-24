@@ -26,6 +26,8 @@ export function getMockDb(): Database.Database {
 	// Sembrado aparte e idempotente: así una `themis-mock.db` creada antes de la
 	// parte de documentos también los recibe al arrancar, sin `yarn db:reset`.
 	seedDocuments(db);
+	// Igual de idempotente y con su propio flag: siembra las transiciones de hito.
+	seedMilestones(db);
 	instance = db;
 	return db;
 }
@@ -85,6 +87,19 @@ function migrate(db: Database.Database): void {
 			type         TEXT NOT NULL,
 			mandatory    INTEGER NOT NULL DEFAULT 1
 		);
+		-- Transiciones de hito (HITOS) que sirve el feed de hitos. Cada fila es una
+		-- transición inmutable con su version monotónica; un mismo (operation_id,
+		-- milestone_type) puede recurrir en el tiempo (ACHIEVED / REVOKED).
+		CREATE TABLE IF NOT EXISTS mock_milestones (
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			operation_id   TEXT NOT NULL,
+			milestone_type TEXT NOT NULL,
+			status         TEXT NOT NULL,
+			source         TEXT NOT NULL,
+			occurred_at    TEXT,
+			version        INTEGER NOT NULL,
+			payload_json   TEXT
+		);
 	`);
 	const seq = db.prepare(`SELECT v FROM mock_meta WHERE k = 'versionSeq'`).get() as
 		| { v: number }
@@ -141,6 +156,48 @@ export interface MockRequirementRow {
 	mandatory: number;
 }
 
+export interface MockMilestoneRow {
+	id: number;
+	operation_id: string;
+	milestone_type: string;
+	status: string;
+	source: string;
+	occurred_at: string | null;
+	version: number;
+	payload_json: string | null;
+}
+
+/**
+ * Inserta una transición de hito en `mock_milestones` con la siguiente `version`
+ * monotónica (la misma secuencia que alimenta el `since` del feed de hitos). El
+ * `occurredAt` ya llega resuelto por quien la emite.
+ */
+export function emitMilestone(
+	db: Database.Database,
+	m: {
+		operationId: string;
+		milestoneType: string;
+		status: string;
+		source: string;
+		occurredAt: string | null;
+		payload?: Record<string, unknown> | null;
+	},
+): void {
+	db.prepare(
+		`INSERT INTO mock_milestones
+			(operation_id, milestone_type, status, source, occurred_at, version, payload_json)
+		 VALUES (@operationId, @milestoneType, @status, @source, @occurredAt, @version, @payloadJson)`,
+	).run({
+		operationId: m.operationId,
+		milestoneType: m.milestoneType,
+		status: m.status,
+		source: m.source,
+		occurredAt: m.occurredAt,
+		version: nextVersion(db),
+		payloadJson: m.payload ? JSON.stringify(m.payload) : null,
+	});
+}
+
 // ── Derivación temporal del estado del alta ──────────────────────────────────
 
 const RECEIVED_MS = 1500;
@@ -179,6 +236,18 @@ export function materialize(db: Database.Database, row: MockRow, now: number): M
 		version,
 		ts,
 	});
+	// Al pasar a PROCESSED emitimos el hito OPERATION_CREATED, para que una
+	// operación recién creada aparezca en el feed de hitos en vivo (igual que el
+	// *drift* del change-feed avanza al materializar el estado del alta).
+	if (becameProcessed) {
+		emitMilestone(db, {
+			operationId: row.operation_id,
+			milestoneType: 'OPERATION_CREATED',
+			status: 'ACHIEVED',
+			source: 'CORE',
+			occurredAt: ts,
+		});
+	}
 	return db.prepare(`SELECT * FROM mock_operations WHERE operation_id = ?`).get(row.operation_id) as MockRow;
 }
 
@@ -487,6 +556,89 @@ function seedDocuments(db: Database.Database): void {
 		for (const doc of documents) docInsert.run(doc);
 		for (const req of requirements) reqInsert.run(req);
 		db.prepare(`INSERT INTO mock_meta (k, v) VALUES ('docsSeeded', 1)`).run();
+	});
+	tx();
+}
+
+/**
+ * Siembra transiciones de hito ilustrativas para las operaciones INTAKE ya
+ * sembradas, con su propio flag (`milestonesSeeded`) para que una base creada
+ * antes de esta parte también las reciba al arrancar. Incluye un ciclo
+ * `ACHIEVED` → `REVOKED` (documentación que caduca) para mostrar que un hito
+ * puede recurrir. Los `milestoneType` usan el catálogo real del core.
+ */
+function seedMilestones(db: Database.Database): void {
+	const done = db.prepare(`SELECT v FROM mock_meta WHERE k = 'milestonesSeeded'`).get() as
+		| { v: number }
+		| undefined;
+	if (done) return;
+
+	const longAgo = Date.now() - 60 * 60 * 1000;
+	const ts = (offset: number) => new Date(longAgo + offset).toISOString();
+
+	const OP1 = '01J8Z9K3QF7MA0INTAKESEED01'; // Ada Lovelace · MORTGAGE
+	const OP2 = '01J8Z9K3QF7MA0INTAKESEED02'; // Alan Turing · SUBROGATION
+	const AUTOPRES = '01J8Z9K3QF7MA0AUTOPRES0001'; // Grace Hopper · MORTGAGE
+
+	const milestones: Array<Parameters<typeof emitMilestone>[1]> = [
+		// OP1 — avance limpio del core hasta declarativos.
+		{
+			operationId: OP1,
+			milestoneType: 'OPERATION_CREATED',
+			status: 'ACHIEVED',
+			source: 'CORE',
+			occurredAt: ts(5000),
+		},
+		{
+			operationId: OP1,
+			milestoneType: 'REACHED_ANALYSIS',
+			status: 'ACHIEVED',
+			source: 'CORE',
+			occurredAt: ts(6000),
+		},
+		{
+			operationId: OP1,
+			milestoneType: 'DECLARATIVES_COMPLETED',
+			status: 'ACHIEVED',
+			source: 'CORE',
+			occurredAt: ts(7000),
+		},
+		// OP2 — documentación completada por DOCS y luego revocada (documento caducado).
+		{
+			operationId: OP2,
+			milestoneType: 'OPERATION_CREATED',
+			status: 'ACHIEVED',
+			source: 'CORE',
+			occurredAt: ts(8000),
+		},
+		{
+			operationId: OP2,
+			milestoneType: 'DOCUMENTATION_COMPLETE',
+			status: 'ACHIEVED',
+			source: 'DOCS',
+			occurredAt: ts(9000),
+		},
+		{
+			operationId: OP2,
+			milestoneType: 'DOCUMENTATION_COMPLETE',
+			status: 'REVOKED',
+			source: 'DOCS',
+			occurredAt: ts(10000),
+			payload: { reason: 'Documento caducado' },
+		},
+		// Autoprescripción — solo su alta.
+		{
+			operationId: AUTOPRES,
+			milestoneType: 'OPERATION_CREATED',
+			status: 'ACHIEVED',
+			source: 'CORE',
+			occurredAt: ts(11000),
+		},
+	];
+
+	const tx = db.transaction(() => {
+		for (const m of milestones) emitMilestone(db, m);
+		db.prepare(`INSERT INTO mock_meta (k, v) VALUES ('milestonesSeeded', 1)`).run();
 	});
 	tx();
 }

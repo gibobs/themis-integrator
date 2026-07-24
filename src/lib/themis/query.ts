@@ -12,10 +12,12 @@ import type {
 	ThemisDocumentUrlResource,
 	ThemisListChangesQuery,
 	ThemisListOperationsQuery,
+	ThemisMilestoneFeedQuery,
 	ThemisOperationChangeResult,
 	ThemisOperationDetailResource,
 	ThemisOperationHistoryResult,
 	ThemisOperationListResult,
+	ThemisOperationMilestoneFeedResult,
 } from './types';
 
 const QUERY = '/themis/query/v1';
@@ -39,6 +41,18 @@ export function createQuery(client: ThemisClient) {
 			const res = await client.request<ThemisOperationChangeResult>({
 				method: 'POST',
 				path: `${QUERY}/operations/changes`,
+				body: query,
+			});
+			return res.data;
+		},
+
+		/** Feed de hitos: transiciones (ACHIEVED/REVOKED) posteriores a `since` (o al `cursor`). */
+		async getOperationsMilestones(
+			query: ThemisMilestoneFeedQuery,
+		): Promise<ThemisOperationMilestoneFeedResult> {
+			const res = await client.request<ThemisOperationMilestoneFeedResult>({
+				method: 'POST',
+				path: `${QUERY}/operations/milestones`,
 				body: query,
 			});
 			return res.data;

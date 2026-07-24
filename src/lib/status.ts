@@ -32,6 +32,18 @@ export const documentStatusMeta: Record<string, { tone: Tone; label: string }> =
 	VERIFIED: { tone: 'success', label: 'Verificado' },
 };
 
+export const milestoneStatusMeta: Record<string, { tone: Tone; label: string }> = {
+	ACHIEVED: { tone: 'success', label: 'Cumplido' },
+	REVOKED: { tone: 'warning', label: 'Revocado' },
+};
+
+export const milestoneSourceMeta: Record<string, { tone: Tone; label: string }> = {
+	CORE: { tone: 'primary', label: 'Core' },
+	DOCS: { tone: 'info', label: 'Documentos' },
+	BACKOFFICE: { tone: 'neutral', label: 'Backoffice' },
+	REQUIREMENTS: { tone: 'neutral', label: 'Requisitos' },
+};
+
 export const originMeta: Record<string, { tone: Tone; label: string }> = {
 	INTAKE: { tone: 'primary', label: 'Intake (tuya)' },
 	AUTOPRESCRIPTION: { tone: 'info', label: 'Autoprescripción' },
