@@ -17,7 +17,7 @@ export function AppShell({
 	return (
 		<div className="flex min-h-screen">
 			<aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col overflow-y-auto border-r border-border bg-card md:flex">
-				<Link href="/" className="flex items-center gap-2.5 border-b border-border px-5 py-4">
+				<Link href="/" className="flex h-14 items-center gap-2.5 border-b border-border px-5">
 					{/* Logo monocromo: en tema oscuro se invierte para conservar contraste. */}
 					<Image
 						src="/logo.png"
