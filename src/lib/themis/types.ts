@@ -428,6 +428,13 @@ export interface ThemisOperationDetailResource extends ThemisOperationResource {
 	mortgage?: ThemisMortgageDto;
 	subrogation?: ThemisSubrogationDto;
 	closed?: ThemisCloseInfoDto;
+	/**
+	 * Expediente electrónico del back-office, presente cuando la operación ha
+	 * recibido un evento `UNDERWRITING_CASE_ASSIGNED` (webhook entrante). Es el
+	 * *efecto* que confirma el evento: no re-aflora en el change-feed, se observa
+	 * consultando el detalle.
+	 */
+	underwritingCase?: ThemisUnderwritingCaseAssignedPayload;
 }
 
 export interface ThemisOperationHistoryEntryResource {
@@ -508,4 +515,48 @@ export interface ThemisDocumentUrlResource {
 	url: string;
 	expiresAt: string;
 	contentType?: string;
+}
+
+// ── Webhook entrante: emisión de eventos de back-office ───────────────────────
+//
+// El webhook de Themis es *entrante*: es el integrador quien **empuja** eventos
+// de back-office a Themis (`POST /themis/webhook/v1/events`) y Themis responde
+// `202`. Themis nunca llama al integrador (eso queda para más adelante); no hay
+// suscripciones. **No hay firma HMAC ni secreto de webhook**: la autenticidad es
+// el token M2M (Bearer), igual que el resto de endpoints.
+//
+// La idempotencia y el orden los gestiona el integrador con el `sourceEventId`:
+// un entero **estrictamente creciente y único por operación** (una sola secuencia
+// por operación, compartida entre todos los `type`). Reenviar el mismo
+// `(operationId, sourceEventId)` es un *replay idempotente* (mismo `eventRef`); un
+// `sourceEventId` inferior al último ya visto se descarta como *fuera de orden*.
+
+/** Tipo de evento del webhook entrante. Enum **aditivo** (abierto). */
+export type ThemisWebhookEventType = 'UNDERWRITING_CASE_ASSIGNED' | (string & {});
+
+/** Payload del evento `UNDERWRITING_CASE_ASSIGNED`. */
+export interface ThemisUnderwritingCaseAssignedPayload {
+	underwritingCaseId: string;
+	processedAt: string;
+}
+
+/** Sobre de un evento de webhook entrante que el integrador empuja a Themis. */
+export interface ThemisWebhookEventRequest {
+	operationId: string;
+	/** Entero estrictamente creciente y único por operación (una sola secuencia). */
+	sourceEventId: number;
+	type: ThemisWebhookEventType;
+	/** Marca temporal del origen (opcional). */
+	occurredAt?: string;
+	payload: ThemisUnderwritingCaseAssignedPayload;
+}
+
+/**
+ * Respuesta `202` del webhook entrante. El `202` **valida el sobre, no el
+ * efecto**: el efecto (el expediente asignado) se confirma consultando el detalle
+ * de la operación. Un *replay* devuelve el **mismo** `eventRef`.
+ */
+export interface ThemisWebhookEventAcceptedResource {
+	eventRef: string;
+	receivedAt: string;
 }

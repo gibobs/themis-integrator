@@ -9,6 +9,7 @@ import {
 	Milestone,
 	Rss,
 	Settings,
+	Webhook,
 } from 'lucide-react';
 import { cn } from '@/lib/util/cn';
 
@@ -18,6 +19,7 @@ const items = [
 	{ href: '/operations/new', label: 'Nueva operación', icon: FilePlus2, exact: true },
 	{ href: '/changes', label: 'Change-feed', icon: Rss, exact: false },
 	{ href: '/milestones', label: 'Hitos', icon: Milestone, exact: false },
+	{ href: '/webhooks', label: 'Webhooks', icon: Webhook, exact: false },
 	{ href: '/reconciliation', label: 'Conciliación', icon: GitCompareArrows, exact: false },
 	{ href: '/settings', label: 'Ajustes', icon: Settings, exact: false },
 ];

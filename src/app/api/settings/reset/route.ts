@@ -11,7 +11,9 @@ import { problemResponse } from '@/lib/server/respond';
 
 export async function POST() {
 	try {
-		getDb().exec('DELETE FROM operations; DELETE FROM feed_state; DELETE FROM audit_log;');
+		getDb().exec(
+			'DELETE FROM operations; DELETE FROM feed_state; DELETE FROM audit_log; DELETE FROM webhook_events;',
+		);
 		return NextResponse.json({ ok: true });
 	} catch (error) {
 		return problemResponse(error);

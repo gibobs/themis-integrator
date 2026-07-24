@@ -89,6 +89,11 @@ Se compone por capas, de abajo a arriba:
 	`ACHIEVED`/`REVOKED`), `getOperation` (detalle con PII), `getOperationHistory` y los
 	tres de **documentos** (`listOperationDocuments`, `getOperationDocumentsStatus`,
 	`getDocumentUrl`), estos últimos por `operationId` (ver [documentos](#documentos)).
+- **`webhooks.ts`** — área de **emisión de eventos** (webhook _entrante_):
+	`sendEvent` empuja un evento de back-office a `POST /themis/webhook/v1/events` y
+	devuelve `202 { eventRef, receivedAt }`. **No** envía `Idempotency-Key`: la
+	idempotencia y el orden los gobierna el `sourceEventId`
+	(ver [webhook entrante](#webhook-entrante-emisión-de-eventos)).
 - **`types.ts` / `schema.ts`** — el contrato en TypeScript y su validación con
 	`zod`. Cubren el alta completa: intervinientes (titulares/avalistas), inmueble o
 	subrogación y la **oferta y bonificaciones** opcionales (`ThemisOfferInputDto`:
@@ -103,7 +108,7 @@ Se compone por capas, de abajo a arriba:
 	intercambio HTTP capturado; lo comparten el SDK y el inspector de la UI.
 
 `getThemisClient()` compone config + transporte (envuelto con `withCapture`) +
-token y devuelve `{ config, client, intake, query, getExchanges }`, donde
+token y devuelve `{ config, client, intake, query, webhooks, getExchanges }`, donde
 `getExchanges()` da los intercambios registrados durante la vida del cliente.
 
 ### 3. Capa SQLite (`src/lib/db`, *server-only*)
@@ -205,7 +210,7 @@ recibe credenciales aunque muestre las cabeceras.
 
 ## Modelo de datos local
 
-El almacén del integrador (`integrator.db`) tiene tres tablas:
+El almacén del integrador (`integrator.db`) tiene cuatro tablas:
 
 ### `operations`
 
@@ -235,17 +240,27 @@ Un **log de auditoría** de las llamadas a Themis (`method`, `path`, `status`,
 `code`, `duration_ms`, `note`). Da trazabilidad "de integrador" y alimenta la vista
 de auditoría.
 
+### `webhook_events`
+
+Los **eventos de webhook entrante emitidos** hacia Themis. Una fila por
+`(operation_id, source_event_id)` —clave **única**— con el `type`, el `payload`
+empujado (`payload_json`), el `event_ref`/`received_at` que devolvió Themis y el
+`outcome` (`ACCEPTED` en el primer envío, `RESENT` en un reenvío idempotente). Es
+donde el integrador **autogestiona la secuencia** por operación: `nextSourceEventId`
+calcula `MAX(source_event_id) + 1` para esa operación.
+
 ---
 
 ## Cómo funciona el mock
 
 El backend simulado respeta la **semántica del contrato** (idempotencia, handoff,
 `202`/`201`, write-back por-ítem, change-feed y feed de hitos con `version`) sobre
-seis tablas: `mock_operations`, `mock_idempotency`, `mock_meta` (un contador
+siete tablas: `mock_operations`, `mock_idempotency`, `mock_meta` (un contador
 `versionSeq`), `mock_milestones` (las transiciones de hito que sirve el feed de
-hitos, sembradas con el catálogo real de `milestoneType` del core) y las dos de
+hitos, sembradas con el catálogo real de `milestoneType` del core), las dos de
 documentos, `mock_documents` y `mock_document_requirements` (ver
-[documentos](#documentos)).
+[documentos](#documentos)), y `mock_webhook_inbox` (el buzón de eventos de webhook
+entrante recibidos; ver [webhook entrante](#webhook-entrante-emisión-de-eventos)).
 
 Claves de su comportamiento:
 
@@ -266,6 +281,13 @@ Claves de su comportamiento:
 	HTTP) y el mismo `externalId` (idempotencia de negocio) devolviendo la operación
 	existente; y emite un `launchToken` de **un solo uso** que se canjea por un
 	`sessionToken` de handoff.
+- **Webhook entrante.** El receptor simulado valida el sobre y responde `202`.
+	Gobierna orden e idempotencia con `source_event_id`: un **replay** (mismo par
+	`operationId` + `source_event_id`) devuelve el **mismo** `eventRef`; un valor
+	**fuera de orden** (menor que el máximo ya visto para esa operación) se registra
+	sin aplicar efecto; un evento nuevo válido aplica el efecto
+	(`underwriting_case_id`/`_at`) **sin subir `version`**, así que **no re-aflora en
+	el change-feed** (es un cambio que el integrador ya tiene mapeado en su lado).
 
 El mock usa **cursores opacos** (base64url) igual que el contrato real, para que el
 código del integrador no dependa de que arranques en modo mock o real.
@@ -378,6 +400,54 @@ bajo demanda con `apiFetch`) y ofrece una **subpágina dedicada**
 Ambas comparten los componentes de presentación (`DocumentsView`) y de descarga
 (`DocumentDownloadButton`), y cada llamada se ve en el `RequestInspector`.
 
+## Webhook entrante (emisión de eventos)
+
+El **webhook de Themis es _entrante_**: es el integrador quien **empuja** eventos
+de back-office a `POST /themis/webhook/v1/events` y Themis responde `202`. No hay
+suscripciones, ni firma HMAC, ni secreto: la autenticidad es el **token M2M**, igual
+que en el resto del contrato. Hoy solo existe `UNDERWRITING_CASE_ASSIGNED`
+(payload `{ underwritingCaseId, processedAt }`); el enum de tipos es **aditivo**.
+
+El **orden y la idempotencia** los gestiona el integrador con el `sourceEventId`
+(entero **estrictamente creciente y único por operación**, una sola secuencia
+compartida entre todos los `type`). El BFF (`/api/webhooks`) autogestiona el
+siguiente `sourceEventId` (o respeta el que edites), **detecta el reenvío antes de
+llamar** (¿ya había fila para ese par en `webhook_events`?), empuja el evento y
+refleja el resultado en el almacén local con su `outcome` (`ACCEPTED` / `RESENT`).
+
+```mermaid
+sequenceDiagram
+	autonumber
+	participant B as Navegador
+	participant BFF as Ruta BFF (/api/webhooks)
+	participant SDK as SDK Themis (webhooks)
+	participant T as Themis | Mock
+	participant DB as SQLite (integrador)
+
+	B->>BFF: POST /api/webhooks {operationId, payload, sourceEventId?}
+	BFF->>DB: nextSourceEventId(op) + getWebhookEvent(op, sid)
+	BFF->>SDK: webhooks.sendEvent({operationId, sourceEventId, type, payload})
+	SDK->>T: POST /themis/webhook/v1/events (Bearer M2M, sin Idempotency-Key)
+	T-->>SDK: 202 {eventRef, receivedAt}
+	SDK-->>BFF: aceptado
+	BFF->>DB: recordWebhookEvent (outcome ACCEPTED | RESENT)
+	BFF-->>B: 202 {event, outcome, sourceEventId, accepted}
+
+	Note over B,T: El 202 valida el sobre, no el efecto.
+	B->>BFF: GET /api/operations/:operationId (detalle)
+	BFF->>T: GET /themis/query/v1/operations/:id
+	T-->>BFF: detalle con underwritingCase (si aplicó)
+	BFF-->>B: el expediente se confirma en el detalle
+```
+
+El `202` **valida el sobre, no el efecto**. El efecto —el expediente electrónico—
+**no re-aflora en el change-feed**: el mock lo aplica **sin subir `version`**, fiel a
+la doc (es un cambio que el integrador ya tiene mapeado). Se **confirma consultando
+el detalle** de la operación (`underwritingCase`), que la UI muestra en la tarjeta
+«Expediente electrónico» del detalle.
+
+---
+
 ## Decisiones de diseño
 
 - **Idempotencia en dos capas.** La **`Idempotency-Key`** (RFC, por operación de
@@ -398,6 +468,12 @@ Ambas comparten los componentes de presentación (`DocumentsView`) y de descarga
 	incremental (`version`, `since`, *cursor*, progreso en `feed_state`) pero son
 	endpoints y claves de feed **separados**, y el de hitos **no** absorbe filas en el
 	índice de operaciones (no son operaciones, son eventos de negocio).
+- **Webhook _entrante_ y efecto fuera del change-feed.** El integrador **emite** el
+	evento (Themis no le llama) y gobierna orden e idempotencia con el `sourceEventId`
+	(no con `Idempotency-Key`). El efecto del evento **no sube `version`**, así que
+	**no re-aflora en el change-feed**: se **confirma en el detalle** de la operación.
+	Es deliberado —el integrador ya tiene ese cambio mapeado en su lado—, y evita
+	mezclar el *drift* observado con los efectos que uno mismo empuja.
 - **Separación índice / detalle como decisión de seguridad.** Los listados y el
 	change-feed son un **índice sin datos personales**; el **detalle** (con PII) se
 	consulta **una operación cada vez**.

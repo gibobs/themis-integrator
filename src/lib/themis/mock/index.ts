@@ -16,6 +16,7 @@ import {
 	type MockMilestoneRow,
 	type MockRequirementRow,
 	type MockRow,
+	type MockWebhookInboxRow,
 } from './store';
 
 function json(status: number, body: unknown): RawResponse {
@@ -128,6 +129,11 @@ export function createMockTransport(): Transport {
 		);
 		if (method === 'GET' && handoffStatus) {
 			return creationStatus(db, decodeURIComponent(handoffStatus[1]!), now);
+		}
+
+		// ── webhook entrante: emisión de eventos ─────────────────────────────────
+		if (method === 'POST' && pathname === '/themis/webhook/v1/events') {
+			return receiveEvent(db, body, now);
 		}
 
 		// ── query ────────────────────────────────────────────────────────────────
@@ -393,6 +399,95 @@ function redeemLaunchToken(
 	return json(200, { sessionToken, expiresIn: 900, operationId: row.operation_id });
 }
 
+/**
+ * Webhook entrante: recibe un evento de back-office empujado por el integrador.
+ * El `202` valida el **sobre**, no el efecto. La idempotencia y el orden se
+ * gobiernan con `source_event_id` (secuencia única por operación):
+ *  - replay (mismo par) → devuelve el mismo `eventRef`;
+ *  - fuera de orden (menor que el máximo ya visto) → se registra sin aplicar efecto;
+ *  - nuevo válido → aplica el efecto en la operación **sin subir `version`** (no
+ *    re-aflora en el change-feed).
+ * Una operación inexistente se acepta igualmente (202 sin efecto), fiel a la doc.
+ */
+function receiveEvent(
+	db: ReturnType<typeof getMockDb>,
+	body: Record<string, unknown>,
+	now: number,
+): RawResponse {
+	// 1. Validación del sobre y del payload del `type`.
+	const operationId = body.operationId ? String(body.operationId) : '';
+	if (!operationId) {
+		return problem(422, 'THEMIS_VALIDATION', 'operationId es obligatorio.');
+	}
+	const rawSid = body.sourceEventId;
+	if (typeof rawSid !== 'number' || !Number.isInteger(rawSid) || rawSid < 1) {
+		return problem(422, 'THEMIS_VALIDATION', 'sourceEventId debe ser un entero positivo.');
+	}
+	const sourceEventId = rawSid;
+	const type = body.type ? String(body.type) : 'UNDERWRITING_CASE_ASSIGNED';
+	const payload = (body.payload ?? {}) as Record<string, unknown>;
+	if (type === 'UNDERWRITING_CASE_ASSIGNED') {
+		if (typeof payload.underwritingCaseId !== 'string' || !payload.underwritingCaseId) {
+			return problem(422, 'THEMIS_VALIDATION', 'payload.underwritingCaseId es obligatorio.');
+		}
+		if (typeof payload.processedAt !== 'string' || !payload.processedAt) {
+			return problem(422, 'THEMIS_VALIDATION', 'payload.processedAt es obligatorio.');
+		}
+	}
+	// Otros `type` (enum aditivo): se acepta el sobre sin validar su payload.
+
+	const receivedAt = new Date(now).toISOString();
+	const occurredAt = body.occurredAt ? String(body.occurredAt) : null;
+
+	// 2. Replay: mismo (operationId, sourceEventId) → mismo eventRef/receivedAt.
+	const existing = db
+		.prepare(`SELECT * FROM mock_webhook_inbox WHERE operation_id = ? AND source_event_id = ?`)
+		.get(operationId, sourceEventId) as MockWebhookInboxRow | undefined;
+	if (existing) {
+		return json(202, { eventRef: existing.event_ref, receivedAt: existing.received_at });
+	}
+
+	// 3. Orden: la secuencia es única por operación (compartida entre todos los
+	// `type`). Un `sourceEventId` menor que el máximo ya visto es fuera de orden.
+	const maxRow = db
+		.prepare(`SELECT MAX(source_event_id) AS max FROM mock_webhook_inbox WHERE operation_id = ?`)
+		.get(operationId) as { max: number | null };
+	const inOrder = sourceEventId > (maxRow.max ?? 0);
+
+	const eventRef = 'evt_' + ulid(now);
+	db.prepare(
+		`INSERT INTO mock_webhook_inbox
+			(event_ref, operation_id, source_event_id, type, occurred_at, payload_json, received_at, applied)
+		 VALUES (@eventRef, @operationId, @sourceEventId, @type, @occurredAt, @payloadJson, @receivedAt, @applied)`,
+	).run({
+		eventRef,
+		operationId,
+		sourceEventId,
+		type,
+		occurredAt,
+		payloadJson: JSON.stringify(payload),
+		receivedAt,
+		applied: inOrder ? 1 : 0,
+	});
+
+	// 4. Nuevo válido (en orden): aplica el efecto SIN subir `version`. La operación
+	// inexistente se acepta igual (el UPDATE simplemente no afecta filas).
+	if (inOrder && type === 'UNDERWRITING_CASE_ASSIGNED') {
+		db.prepare(
+			`UPDATE mock_operations
+			 SET underwriting_case_id = @caseId, underwriting_case_at = @processedAt, updated_at = @updatedAt
+			 WHERE operation_id = @operationId`,
+		).run({
+			caseId: String(payload.underwritingCaseId),
+			processedAt: String(payload.processedAt),
+			updatedAt: receivedAt,
+			operationId,
+		});
+	}
+
+	return json(202, { eventRef, receivedAt });
+}
+
 function listOperations(
 	db: ReturnType<typeof getMockDb>,
 	body: Record<string, unknown>,
@@ -569,6 +664,14 @@ function getDetail(db: ReturnType<typeof getMockDb>, id: string, now: number): R
 		property: detail.property,
 		mortgage: detail.mortgage,
 		subrogation: detail.subrogation,
+		// Efecto del webhook entrante (UNDERWRITING_CASE_ASSIGNED), si se recibió.
+		underwritingCase:
+			row.underwriting_case_id && row.underwriting_case_at
+				? {
+						underwritingCaseId: row.underwriting_case_id,
+						processedAt: row.underwriting_case_at,
+					}
+				: undefined,
 	});
 }
 
