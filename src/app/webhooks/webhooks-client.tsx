@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select } from '@/components/ui/select';
 import { Callout } from '@/components/ui/callout';
 import { Spinner } from '@/components/ui/spinner';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table';
@@ -13,11 +12,7 @@ import { StatusBadge } from '@/components/status-badge';
 import { CopyButton } from '@/components/copy-button';
 import { RequestInspector } from '@/components/request-inspector';
 import { apiFetch, ApiError, type WithExchanges } from '@/lib/client/api';
-import type {
-	ThemisExchange,
-	ThemisOperationResource,
-	ThemisWebhookEventAcceptedResource,
-} from '@/lib/themis';
+import type { ThemisExchange, ThemisWebhookEventAcceptedResource } from '@/lib/themis';
 import { shortId } from '@/lib/util/format';
 
 /** Forma del evento tal y como lo serializa `GET /api/webhooks` (almacén local). */
@@ -46,7 +41,6 @@ interface PushResponse {
 const DEFAULT_TYPE = 'UNDERWRITING_CASE_ASSIGNED';
 
 export function WebhooksClient({ initialOperationId }: { initialOperationId: string }) {
-	const [operations, setOperations] = React.useState<ThemisOperationResource[]>([]);
 	const [operationId, setOperationId] = React.useState(initialOperationId);
 	const [underwritingCaseId, setUnderwritingCaseId] = React.useState('EXP-2026-1');
 	const [processedAt, setProcessedAt] = React.useState(() => new Date().toISOString());
@@ -81,20 +75,13 @@ export function WebhooksClient({ initialOperationId }: { initialOperationId: str
 		return res.items;
 	}, []);
 
-	// Carga inicial: operaciones (para el selector) e historial de eventos.
+	// Carga inicial del historial de eventos emitidos.
 	React.useEffect(() => {
 		let cancelled = false;
 		(async () => {
 			try {
-				const [ops, hist] = await Promise.all([
-					apiFetch<WithExchanges<{ items: ThemisOperationResource[] }>>(
-						'/api/operations?linked=ALL&limit=100&sort=DESC',
-					),
-					apiFetch<{ items: WebhookEventRow[] }>('/api/webhooks'),
-				]);
-				if (cancelled) return;
-				setOperations(ops.items);
-				setEvents(hist.items);
+				const hist = await apiFetch<{ items: WebhookEventRow[] }>('/api/webhooks');
+				if (!cancelled) setEvents(hist.items);
 			} catch (err) {
 				if (!cancelled) setError(toMessage(err));
 			}
@@ -164,18 +151,6 @@ export function WebhooksClient({ initialOperationId }: { initialOperationId: str
 		setResendingId(null);
 	}
 
-	// El selector incluye la operación preseleccionada aunque no esté en el listado.
-	const options = React.useMemo(() => {
-		const list = operations.map((o) => ({
-			operationId: o.operationId,
-			label: o.name ? `${o.name} · ${shortId(o.operationId)}` : shortId(o.operationId),
-		}));
-		if (operationId && !list.some((o) => o.operationId === operationId)) {
-			list.unshift({ operationId, label: `${shortId(operationId)} (preseleccionada)` });
-		}
-		return list;
-	}, [operations, operationId]);
-
 	return (
 		<div className="space-y-4">
 			<Card>
@@ -185,22 +160,18 @@ export function WebhooksClient({ initialOperationId }: { initialOperationId: str
 				<CardContent className="space-y-4">
 					<div className="grid gap-3 md:grid-cols-2">
 						<div className="space-y-1">
-							<Label htmlFor="operationId">Operación</Label>
-							<Select
+							<Label htmlFor="operationId">operationId</Label>
+							<Input
 								id="operationId"
+								placeholder="01J8Z9K3QF7MA0INTAKESEED01"
 								value={operationId}
-								onChange={(e) => {
-									setOperationId(e.target.value);
-									setSourceEventId('');
-								}}
-							>
-								<option value="">Elige una operación…</option>
-								{options.map((o) => (
-									<option key={o.operationId} value={o.operationId}>
-										{o.label}
-									</option>
-								))}
-							</Select>
+								onChange={(e) => setOperationId(e.target.value)}
+								className="font-mono text-xs"
+							/>
+							<p className="text-xs text-muted-foreground">
+								Pega el <code>operationId</code> de la operación (lo tienes en Operaciones o en su
+								detalle).
+							</p>
 						</div>
 						<div className="space-y-1">
 							<Label htmlFor="type">Tipo de evento</Label>
